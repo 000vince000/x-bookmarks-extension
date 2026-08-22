@@ -13,12 +13,22 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://x.com/i/bookmarks*", "https://twitter.com/i/bookmarks*"],
+      "matches": [
+        "https://x.com/i/bookmarks*",
+        "https://x.com/i/history*",
+        "https://twitter.com/i/bookmarks*",
+        "https://twitter.com/i/history*"
+      ],
       "js": ["parse.js", "content.js"],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://x.com/i/bookmarks*", "https://twitter.com/i/bookmarks*"],
+      "matches": [
+        "https://x.com/i/bookmarks*",
+        "https://x.com/i/history*",
+        "https://twitter.com/i/bookmarks*",
+        "https://twitter.com/i/history*"
+      ],
       "js": ["inject.js"],
       "world": "MAIN",
       "run_at": "document_start"
