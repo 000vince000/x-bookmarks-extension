@@ -42,6 +42,12 @@ function parseTweet(tweetResult) {
     const userAvatar = userResult?.avatar;
 
     const screenName = userCore?.screen_name || userLegacy?.screen_name;
+    if (!screenName) {
+      console.warn("[x-bookmarks] could not resolve author, dumping shapes:", {
+        tweetTopLevelKeys: Object.keys(tweet),
+        userResult,
+      });
+    }
     const media = legacy.extended_entities?.media || legacy.entities?.media || [];
 
     return {
