@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "X Bookmarks Library",
+  "version": "0.1.0",
+  "description": "Capture, search, and organize your X.com bookmarks locally.",
+  "permissions": ["unlimitedStorage"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open Bookmarks Library"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/i/bookmarks*", "https://twitter.com/i/bookmarks*"],
+      "js": ["parse.js", "content.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://x.com/i/bookmarks*", "https://twitter.com/i/bookmarks*"],
+      "js": ["inject.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    }
+  ]
+}

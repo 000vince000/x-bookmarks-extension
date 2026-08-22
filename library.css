@@ -1,0 +1,151 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #0e1621;
+  color: #e7e9ea;
+  font: 14px/1.4 system-ui, -apple-system, sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #2f3336;
+}
+
+header h1 {
+  font-size: 18px;
+  margin: 0;
+}
+
+#count {
+  color: #8b98a5;
+  font-size: 13px;
+}
+
+#controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid #2f3336;
+  flex-wrap: wrap;
+}
+
+#controls input[type="text"] {
+  flex: 1;
+  min-width: 220px;
+}
+
+input,
+select,
+textarea,
+button {
+  background: #1a2430;
+  color: #e7e9ea;
+  border: 1px solid #2f3336;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+}
+
+#list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  padding: 16px 20px;
+}
+
+.card {
+  background: #151f2b;
+  border: 1px solid #2f3336;
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #2f3336;
+  object-fit: cover;
+}
+
+.name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.handle {
+  color: #8b98a5;
+  font-size: 12px;
+}
+
+.date {
+  margin-left: auto;
+  color: #8b98a5;
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.text {
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+
+.media {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 4px;
+}
+
+.media img {
+  width: 100%;
+  border-radius: 6px;
+  object-fit: cover;
+  max-height: 100px;
+}
+
+.stats {
+  color: #8b98a5;
+  font-size: 12px;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag-chip {
+  background: #1d9bf0;
+  color: #fff;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tag-input {
+  font-size: 12px;
+}
+
+.note-input {
+  font-size: 12px;
+  resize: vertical;
+  min-height: 40px;
+}
