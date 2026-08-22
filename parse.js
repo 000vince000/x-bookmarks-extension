@@ -33,14 +33,22 @@ function parseTweet(tweetResult) {
     if (!tweet || !tweet.legacy || !tweet.rest_id) return null;
 
     const legacy = tweet.legacy;
-    const user = tweet.core?.user_results?.result?.legacy;
+    const userResult = tweet.core?.user_results?.result;
+    // X split user fields out of the old `legacy` bag into separate
+    // `core` (name/screen_name) and `avatar` (image_url) objects — check
+    // both shapes since legacy may or may not still be populated.
+    const userCore = userResult?.core;
+    const userLegacy = userResult?.legacy;
+    const userAvatar = userResult?.avatar;
+
+    const screenName = userCore?.screen_name || userLegacy?.screen_name;
     const media = legacy.extended_entities?.media || legacy.entities?.media || [];
 
     return {
       id: tweet.rest_id,
-      authorHandle: user?.screen_name || "unknown",
-      authorName: user?.name || "unknown",
-      authorAvatar: user?.profile_image_url_https || "",
+      authorHandle: screenName || "unknown",
+      authorName: userCore?.name || userLegacy?.name || "unknown",
+      authorAvatar: userAvatar?.image_url || userLegacy?.profile_image_url_https || "",
       text: legacy.full_text || "",
       createdAt: legacy.created_at ? new Date(legacy.created_at).toISOString() : null,
       capturedAt: new Date().toISOString(),
@@ -48,7 +56,7 @@ function parseTweet(tweetResult) {
       likeCount: legacy.favorite_count || 0,
       retweetCount: legacy.retweet_count || 0,
       replyCount: legacy.reply_count || 0,
-      url: user?.screen_name ? `https://x.com/${user.screen_name}/status/${tweet.rest_id}` : "",
+      url: screenName ? `https://x.com/${screenName}/status/${tweet.rest_id}` : "",
     };
   } catch (err) {
     console.warn("[x-bookmarks] failed to parse tweet entry", err);
