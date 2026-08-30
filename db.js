@@ -34,7 +34,16 @@ export async function upsertBookmarks(records) {
       getReq.onsuccess = () => {
         const existing = getReq.result;
         if (existing) {
-          store.put({ ...rec, tags: existing.tags || [], note: existing.note || "" });
+          const preserved = { tags: existing.tags || [], note: existing.note || "" };
+          // Only carry the embedding forward if the text it was computed
+          // from hasn't changed (e.g. a parser fix now captures quoted-tweet
+          // text) — otherwise it'd silently go stale against the new text.
+          if (existing.text === rec.text) {
+            if (existing.embedding !== undefined) preserved.embedding = existing.embedding;
+            if (existing.embeddingModel !== undefined) preserved.embeddingModel = existing.embeddingModel;
+            if (existing.embeddedAt !== undefined) preserved.embeddedAt = existing.embeddedAt;
+          }
+          store.put({ ...rec, ...preserved });
           updated++;
         } else {
           store.put({ ...rec, tags: [], note: "" });
@@ -73,6 +82,38 @@ export async function updateBookmarkMeta(id, { tags, note } = {}) {
       if (note !== undefined) rec.note = note;
       store.put(rec);
     };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function setEmbedding(id, embedding, model) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const rec = getReq.result;
+      if (!rec) {
+        reject(new Error(`bookmark ${id} not found`));
+        return;
+      }
+      rec.embedding = embedding;
+      rec.embeddingModel = model;
+      rec.embeddedAt = new Date().toISOString();
+      store.put(rec);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function deleteBookmark(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
