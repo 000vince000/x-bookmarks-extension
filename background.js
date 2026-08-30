@@ -1,4 +1,4 @@
-import { upsertBookmarks } from "./db.js";
+import { upsertBookmarks, upsertOwnTweets } from "./db.js";
 
 const X_TAB_URLS = [
   "https://x.com/i/bookmarks*",
@@ -10,6 +10,13 @@ const X_TAB_URLS = [
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "CAPTURE_BATCH") {
     upsertBookmarks(msg.records)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((err) => sendResponse({ ok: false, error: String(err) }));
+    return true; // keep the message channel open for the async response
+  }
+
+  if (msg?.type === "OWN_TWEETS_BATCH") {
+    upsertOwnTweets(msg.records)
       .then((result) => sendResponse({ ok: true, ...result }))
       .catch((err) => sendResponse({ ok: false, error: String(err) }));
     return true; // keep the message channel open for the async response

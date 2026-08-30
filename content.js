@@ -2,7 +2,10 @@
 // inject.js (MAIN world), parses them via parse.js, persists new records
 // through the background worker, and drives the on-page capture UI.
 (() => {
-  const seenIds = new Set();
+  // Kept per-kind, not shared: the same tweet id can legitimately need to
+  // reach both destinations (e.g. you bookmarked one of your own tweets),
+  // so "already seen" for one corpus shouldn't suppress the other.
+  const seenIds = { bookmarks: new Set(), ownTweets: new Set() };
   let capturedTotal = 0;
   let lastNewCaptureAt = Date.now();
   let statusEl;
@@ -12,15 +15,18 @@
     const msg = event.data;
     if (!msg || msg.source !== "x-bookmarks-extension" || msg.type !== "GRAPHQL_CAPTURE") return;
 
-    const records = parseBookmarksResponse(msg.payload);
-    const newRecords = records.filter((r) => !seenIds.has(r.id));
+    const isOwnTweets = msg.kind === "ownTweets";
+    const records = isOwnTweets ? parseOwnTweetsResponse(msg.payload) : parseBookmarksResponse(msg.payload);
+    const seen = seenIds[isOwnTweets ? "ownTweets" : "bookmarks"];
+    const newRecords = records.filter((r) => !seen.has(r.id));
     if (!newRecords.length) return;
 
-    newRecords.forEach((r) => seenIds.add(r.id));
+    newRecords.forEach((r) => seen.add(r.id));
     capturedTotal += newRecords.length;
     lastNewCaptureAt = Date.now();
 
-    chrome.runtime.sendMessage({ type: "CAPTURE_BATCH", records: newRecords }, (res) => {
+    const messageType = isOwnTweets ? "OWN_TWEETS_BATCH" : "CAPTURE_BATCH";
+    chrome.runtime.sendMessage({ type: messageType, records: newRecords }, (res) => {
       if (!res?.ok) console.warn("[x-bookmarks] capture batch failed", res?.error);
     });
 

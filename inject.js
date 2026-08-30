@@ -3,10 +3,17 @@
 // browser already received — no extra requests, no token handling.
 (() => {
   const BOOKMARK_URL_PATTERN = /\/graphql\/[^/]+\/(Bookmarks|BookmarkTimeline)/i;
+  const OWN_TWEETS_URL_PATTERN = /\/graphql\/[^/]+\/(UserOriginalsTimeline|UserRepliesTimeline)/i;
 
-  function postCapture(json) {
+  function captureKind(url) {
+    if (BOOKMARK_URL_PATTERN.test(url)) return "bookmarks";
+    if (OWN_TWEETS_URL_PATTERN.test(url)) return "ownTweets";
+    return null;
+  }
+
+  function postCapture(kind, json) {
     window.postMessage(
-      { source: "x-bookmarks-extension", type: "GRAPHQL_CAPTURE", payload: json },
+      { source: "x-bookmarks-extension", type: "GRAPHQL_CAPTURE", kind, payload: json },
       "*"
     );
   }
@@ -16,11 +23,12 @@
     const response = await originalFetch.apply(this, args);
     try {
       const url = typeof args[0] === "string" ? args[0] : args[0]?.url;
-      if (url && BOOKMARK_URL_PATTERN.test(url)) {
+      const kind = url && captureKind(url);
+      if (kind) {
         response
           .clone()
           .json()
-          .then(postCapture)
+          .then((json) => postCapture(kind, json))
           .catch(() => {});
       }
     } catch (_) {
@@ -112,8 +120,9 @@
   XMLHttpRequest.prototype.send = function (...args) {
     this.addEventListener("load", () => {
       try {
-        if (this.__xBookmarksUrl && BOOKMARK_URL_PATTERN.test(this.__xBookmarksUrl)) {
-          postCapture(JSON.parse(this.responseText));
+        const kind = this.__xBookmarksUrl && captureKind(this.__xBookmarksUrl);
+        if (kind) {
+          postCapture(kind, JSON.parse(this.responseText));
         }
       } catch (_) {
         // ignore

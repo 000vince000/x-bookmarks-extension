@@ -88,6 +88,11 @@ function parseTweet(tweetResult) {
   }
 }
 
+function parseTweetFromItemContent(itemContent) {
+  if (!itemContent || itemContent.itemType !== "TimelineTweet") return null;
+  return parseTweet(itemContent.tweet_results?.result);
+}
+
 function parseBookmarksResponse(json) {
   const records = [];
   try {
@@ -97,9 +102,7 @@ function parseBookmarksResponse(json) {
     for (const instruction of instructions) {
       if (instruction.type !== "TimelineAddEntries") continue;
       for (const entry of instruction.entries || []) {
-        const itemContent = entry?.content?.itemContent;
-        if (!itemContent || itemContent.itemType !== "TimelineTweet") continue;
-        const parsed = parseTweet(itemContent.tweet_results?.result);
+        const parsed = parseTweetFromItemContent(entry?.content?.itemContent);
         if (parsed) records.push(parsed);
       }
     }
@@ -107,4 +110,42 @@ function parseBookmarksResponse(json) {
     console.warn("[x-bookmarks] failed to parse bookmarks response", err);
   }
   return records;
+}
+
+// UserOriginalsTimeline (Posts tab) / UserRepliesTimeline (Posts & Replies
+// tab) share a different top-level shape than Bookmarks
+// (data.user.result.timeline.timeline, not data.bookmark_timeline_v2), and
+// mix two entry shapes: a flat TimelineTimelineItem per standalone post,
+// and a TimelineTimelineModule (a "conversation" grouping a reply together
+// with the tweet it's replying to) whose tweets sit one level deeper under
+// content.items[].item.itemContent. Every tweet found — including the OP's
+// tweet riding along inside a reply's module — gets filtered down to just
+// OWN_HANDLE afterward, since the OP isn't something we want in this corpus.
+const OWN_HANDLE = "vinnygarr";
+
+function parseOwnTweetsResponse(json) {
+  const records = [];
+  try {
+    const timeline = json?.data?.user?.result?.timeline?.timeline;
+    const instructions = timeline?.instructions || [];
+    for (const instruction of instructions) {
+      const entries = instruction.entries || (instruction.entry ? [instruction.entry] : []);
+      for (const entry of entries) {
+        const content = entry?.content;
+        if (!content) continue;
+        if (content.__typename === "TimelineTimelineItem") {
+          const parsed = parseTweetFromItemContent(content.itemContent);
+          if (parsed) records.push(parsed);
+        } else if (content.__typename === "TimelineTimelineModule") {
+          for (const moduleItem of content.items || []) {
+            const parsed = parseTweetFromItemContent(moduleItem?.item?.itemContent);
+            if (parsed) records.push(parsed);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[x-bookmarks] failed to parse own-tweets response", err);
+  }
+  return records.filter((r) => r.authorHandle.toLowerCase() === OWN_HANDLE);
 }

@@ -1,6 +1,7 @@
 export const DB_NAME = "x-bookmarks";
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 export const STORE = "bookmarks";
+export const STORE_OWN_TWEETS = "ownTweets";
 
 export function openDB() {
   return new Promise((resolve, reject) => {
@@ -12,6 +13,12 @@ export function openDB() {
         store.createIndex("authorHandle", "authorHandle", { unique: false });
         store.createIndex("createdAt", "createdAt", { unique: false });
         store.createIndex("capturedAt", "capturedAt", { unique: false });
+      }
+      // A reference corpus of the account owner's own tweets — used to
+      // score bookmarks by similarity to what this person has personally
+      // written, not by in-cluster centrality (see clusters.js).
+      if (!db.objectStoreNames.contains(STORE_OWN_TWEETS)) {
+        db.createObjectStore(STORE_OWN_TWEETS, { keyPath: "id" });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -114,6 +121,73 @@ export async function deleteBookmark(id) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
     tx.objectStore(STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Own-tweets corpus — mirrors upsertBookmarks/setEmbedding's shape, minus
+// tags/notes (meaningless here) but keeping the same text-change-invalidates
+// embedding safeguard.
+export async function upsertOwnTweets(records) {
+  if (!records.length) return { inserted: 0, updated: 0 };
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_OWN_TWEETS, "readwrite");
+    const store = tx.objectStore(STORE_OWN_TWEETS);
+    let inserted = 0;
+    let updated = 0;
+    for (const rec of records) {
+      const getReq = store.get(rec.id);
+      getReq.onsuccess = () => {
+        const existing = getReq.result;
+        if (existing) {
+          const preserved = {};
+          if (existing.text === rec.text) {
+            if (existing.embedding !== undefined) preserved.embedding = existing.embedding;
+            if (existing.embeddingModel !== undefined) preserved.embeddingModel = existing.embeddingModel;
+            if (existing.embeddedAt !== undefined) preserved.embeddedAt = existing.embeddedAt;
+          }
+          store.put({ ...rec, ...preserved });
+          updated++;
+        } else {
+          store.put(rec);
+          inserted++;
+        }
+      };
+    }
+    tx.oncomplete = () => resolve({ inserted, updated });
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function getAllOwnTweets() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_OWN_TWEETS, "readonly");
+    const req = tx.objectStore(STORE_OWN_TWEETS).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function setOwnTweetEmbedding(id, embedding, model) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_OWN_TWEETS, "readwrite");
+    const store = tx.objectStore(STORE_OWN_TWEETS);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const rec = getReq.result;
+      if (!rec) {
+        reject(new Error(`own tweet ${id} not found`));
+        return;
+      }
+      rec.embedding = embedding;
+      rec.embeddingModel = model;
+      rec.embeddedAt = new Date().toISOString();
+      store.put(rec);
+    };
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
