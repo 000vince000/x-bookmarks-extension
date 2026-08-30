@@ -16,7 +16,18 @@
       <select id="tagFilter"><option value="">All tags</option></select>
       <label><input type="checkbox" id="mediaOnly" /> Media only</label>
     </div>
-    <div id="list"></div>
+    <div id="embedControls">
+      <span id="embedStatus"></span>
+      <button id="embedBtn">Compute embeddings</button>
+      <label>Groups <input id="clusterK" type="number" min="2" max="60" value="35" title="Number of groups" /></label>
+      <label>Related threshold <input id="relatedMinScore" type="number" min="0" max="1" step="0.05" value="0.3" title="Minimum similarity score to show as Related" /></label>
+    </div>
+    <div id="browse">
+      <nav id="sidebar"></nav>
+      <div id="main">
+        <div id="list"></div>
+      </div>
+    </div>
     <script type="module" src="library.js"></script>
   </body>
 </html>
