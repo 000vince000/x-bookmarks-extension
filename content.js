@@ -27,6 +27,30 @@
     updateStatus();
   });
 
+  // Relays a delete request from the background worker into the MAIN-world
+  // script (only it can issue the real, page-authenticated fetch) and
+  // relays the result back.
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "DELETE_BOOKMARK") return;
+    const requestId = `del-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    const onResult = (event) => {
+      if (event.source !== window) return;
+      const data = event.data;
+      if (!data || data.source !== "x-bookmarks-extension" || data.type !== "DELETE_BOOKMARK_RESULT") return;
+      if (data.requestId !== requestId) return;
+      window.removeEventListener("message", onResult);
+      sendResponse({ ok: data.ok, error: data.error });
+    };
+    window.addEventListener("message", onResult);
+
+    window.postMessage(
+      { source: "x-bookmarks-extension", type: "DELETE_BOOKMARK_REQUEST", tweetId: msg.tweetId, requestId },
+      "*"
+    );
+    return true; // keep the message channel open for the async response
+  });
+
   function injectUI() {
     const bar = document.createElement("div");
     bar.id = "x-bookmarks-status-bar";
