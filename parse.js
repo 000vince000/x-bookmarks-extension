@@ -27,6 +27,26 @@ function unwrapTweetResult(result) {
   return result;
 }
 
+// X split user fields out of the old `legacy` bag into separate `core`
+// (name/screen_name) and `avatar` (image_url) objects — check both shapes
+// since legacy may or may not still be populated.
+function extractScreenName(userResult) {
+  return userResult?.core?.screen_name || userResult?.legacy?.screen_name || "";
+}
+
+// Quote tweets nest the quoted tweet the same way the outer entry nests its
+// own tweet_results — without this, `legacy.full_text` on the outer tweet is
+// often just a one-word reaction ("Troubling") with the actual substance
+// sitting unread in this nested field.
+function extractQuoted(tweet) {
+  const quoted = unwrapTweetResult(tweet.quoted_status_result?.result);
+  if (!quoted?.legacy) return null;
+  const handle = extractScreenName(quoted.core?.user_results?.result);
+  const text = quoted.legacy.full_text || "";
+  if (!text) return null;
+  return handle ? `Quoting @${handle}: ${text}` : `Quoting: ${text}`;
+}
+
 function parseTweet(tweetResult) {
   try {
     const tweet = unwrapTweetResult(tweetResult);
@@ -34,14 +54,11 @@ function parseTweet(tweetResult) {
 
     const legacy = tweet.legacy;
     const userResult = tweet.core?.user_results?.result;
-    // X split user fields out of the old `legacy` bag into separate
-    // `core` (name/screen_name) and `avatar` (image_url) objects — check
-    // both shapes since legacy may or may not still be populated.
     const userCore = userResult?.core;
     const userLegacy = userResult?.legacy;
     const userAvatar = userResult?.avatar;
 
-    const screenName = userCore?.screen_name || userLegacy?.screen_name;
+    const screenName = extractScreenName(userResult);
     if (!screenName) {
       console.warn("[x-bookmarks] could not resolve author, dumping shapes:", {
         tweetTopLevelKeys: Object.keys(tweet),
@@ -49,13 +66,14 @@ function parseTweet(tweetResult) {
       });
     }
     const media = legacy.extended_entities?.media || legacy.entities?.media || [];
+    const quoted = extractQuoted(tweet);
 
     return {
       id: tweet.rest_id,
       authorHandle: screenName || "unknown",
       authorName: userCore?.name || userLegacy?.name || "unknown",
       authorAvatar: userAvatar?.image_url || userLegacy?.profile_image_url_https || "",
-      text: legacy.full_text || "",
+      text: quoted ? `${legacy.full_text || ""}\n\n${quoted}` : legacy.full_text || "",
       createdAt: legacy.created_at ? new Date(legacy.created_at).toISOString() : null,
       capturedAt: new Date().toISOString(),
       mediaUrls: extractMediaUrls(media),
