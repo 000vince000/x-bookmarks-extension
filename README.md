@@ -19,6 +19,11 @@ X.com's bookmarks UI has no real search or filtering, and there's no free bulk A
 
 `parse.js` walks X's GraphQL response shape (`timeline.instructions → entries → itemContent → tweet_results`). X occasionally changes this shape or the GraphQL query id in the URL. The parser matches on the operation name (`Bookmarks`/`BookmarkTimeline`) rather than a hardcoded query id, and every parse step is try/catch'd so a shape change skips entries instead of crashing capture — but if bookmarks stop being captured, this is the first place to check (open DevTools → Network → filter `graphql` while on the bookmarks page, compare the real response shape against `parse.js`).
 
+## Known limitations
+
+- **Quoted X Articles aren't captured.** `parse.js` unwraps a quote-tweet's nested `quoted_status_result` to pull in the quoted tweet's text, but if the quoted content is an X Article (long-form post) rather than a normal tweet, `legacy.full_text` on it is just the article's URL — the actual title/body lives in a different, not-yet-identified part of the response. TODO: find that shape and pull in at least the article title.
+- **Video thumbnails render broken.** `library.js`'s card rendering puts every media URL — including `.mp4` video URLs extracted by `parse.js` — into a plain `<img>` tag. Browsers can't decode video as an image, and X's video CDN resets the connection for these requests from a `chrome-extension://` origin. TODO: render `<video>` for video media instead of `<img>`.
+
 ## Status
 
 Core capture pipeline, storage, and library UI are scaffolded. Not yet verified against live X.com responses — the GraphQL parsing in `parse.js` is based on the publicly known shape and may need adjustment on first real test.
