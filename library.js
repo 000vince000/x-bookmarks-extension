@@ -1,10 +1,18 @@
-import { getAllBookmarks, updateBookmarkMeta, setEmbedding, deleteBookmark as dbDeleteBookmark } from "./db.js";
+import {
+  getAllBookmarks,
+  updateBookmarkMeta,
+  setEmbedding,
+  deleteBookmark as dbDeleteBookmark,
+  getAllOwnTweets,
+  setOwnTweetEmbedding,
+} from "./db.js";
 import { embedAllMissing, topRelated } from "./embeddings.js";
 import { computeClusters } from "./clusters.js";
 
 const DEFAULT_K = 35;
 
 let all = [];
+let ownTweets = [];
 let filtered = [];
 let searchActive = false; // true whenever search/filters are set — bypasses topic browsing
 let clusters = null; // computed lazily, invalidated on new embeddings / K change
@@ -29,20 +37,35 @@ const els = {
   embedStatus: document.getElementById("embedStatus"),
   clusterK: document.getElementById("clusterK"),
   relatedMinScore: document.getElementById("relatedMinScore"),
+  ownTweetStatus: document.getElementById("ownTweetStatus"),
+  ownTweetEmbedBtn: document.getElementById("ownTweetEmbedBtn"),
 };
 
 async function load() {
   all = await getAllBookmarks();
   all.sort((a, b) => (b.capturedAt || "").localeCompare(a.capturedAt || ""));
+  ownTweets = await getAllOwnTweets();
   populateFilters();
   applyFilters();
   updateEmbedStatus();
+  updateOwnTweetStatus();
 }
 
 function updateEmbedStatus() {
   const embedded = all.filter((r) => r.embedding).length;
   els.embedStatus.textContent = `${embedded}/${all.length} embedded`;
   if (!els.clusterK.value) els.clusterK.value = DEFAULT_K;
+}
+
+function updateOwnTweetStatus() {
+  const embedded = ownTweets.filter((r) => r.embedding).length;
+  els.ownTweetStatus.textContent = `Own tweets: ${embedded}/${ownTweets.length} embedded`;
+}
+
+// Only tweets with an embedding are usable as a personal-relevance
+// reference — passed into computeClusters wherever it's called.
+function ownTweetEmbeddings() {
+  return ownTweets.filter((r) => r.embedding).map((r) => r.embedding);
 }
 
 let embedding = false;
@@ -88,7 +111,43 @@ function resetDrillDown() {
   focusedRecord = null;
 }
 
+let ownTweetEmbedding = false;
+let ownTweetEmbedCancelled = false;
+
+async function toggleOwnTweetEmbedding() {
+  if (ownTweetEmbedding) {
+    ownTweetEmbedCancelled = true;
+    return;
+  }
+  ownTweetEmbedding = true;
+  ownTweetEmbedCancelled = false;
+  els.ownTweetEmbedBtn.textContent = "Stop embedding";
+
+  await embedAllMissing(ownTweets, {
+    onModelProgress: (progress) => {
+      if (progress?.status === "progress" && progress.total) {
+        const pct = Math.round((progress.loaded / progress.total) * 100);
+        els.ownTweetStatus.textContent = `Downloading model… ${pct}%`;
+      }
+    },
+    onItemProgress: (done, total) => {
+      els.ownTweetStatus.textContent = `Embedding ${done}/${total}…`;
+      updateOwnTweetStatus();
+    },
+    isCancelled: () => ownTweetEmbedCancelled,
+    persist: (id, vec, model) => setOwnTweetEmbedding(id, vec, model),
+  });
+
+  ownTweetEmbedding = false;
+  els.ownTweetEmbedBtn.textContent = "Compute own-tweet embeddings";
+  clusters = null; // representative picks depend on this corpus — recompute
+  resetDrillDown();
+  updateOwnTweetStatus();
+  render();
+}
+
 els.embedBtn.addEventListener("click", toggleEmbedding);
+els.ownTweetEmbedBtn.addEventListener("click", toggleOwnTweetEmbedding);
 els.clusterK.addEventListener("change", () => {
   clusters = null;
   resetDrillDown();
@@ -151,12 +210,18 @@ function getGroups() {
   const embedded = all.filter((r) => r.embedding);
   let realClusters = [];
   if (embedded.length >= 2) {
-    clusters ??= computeClusters(embedded, Number(els.clusterK.value) || DEFAULT_K);
+    clusters ??= computeClusters(embedded, Number(els.clusterK.value) || DEFAULT_K, ownTweetEmbeddings());
     realClusters = clusters;
   }
   const clusteredIds = new Set(realClusters.flatMap((g) => g.members.map((r) => r.id)));
   const unsortedMembers = all.filter((r) => !clusteredIds.has(r.id));
-  const groups = realClusters.map((g, i) => ({ key: `cluster-${i}`, label: g.label, members: g.members }));
+  const groups = realClusters.map((g, i) => ({
+    key: `cluster-${i}`,
+    label: g.label,
+    members: g.members,
+    centralId: g.centralId,
+    scores: g.scores,
+  }));
   if (unsortedMembers.length) {
     groups.push({ key: "unsorted", label: "Unsorted", members: unsortedMembers, unsorted: true });
   }
@@ -170,20 +235,23 @@ function renderSidebar(groups) {
     btn.className =
       "sidebar-item" + (g.unsorted ? " unsorted" : "") + (g.key === selectedGroupKey ? " active" : "");
     btn.innerHTML = `<span>${g.label}</span><span class="sidebar-count">${g.members.length}</span>`;
-    btn.addEventListener("click", () => {
-      selectedGroupKey = g.key;
-      subClusters = null;
-      subGroupParentKey = null;
-      selectedSubKey = null;
-      clearSearchAndFilters();
-    });
+    btn.addEventListener("click", () => selectGroup(g.key));
     els.sidebar.appendChild(btn);
   }
 }
 
+function selectGroup(key) {
+  selectedGroupKey = key;
+  subClusters = null;
+  subGroupParentKey = null;
+  selectedSubKey = null;
+  clearSearchAndFilters();
+}
+
 function render() {
   els.count.textContent = `${filtered.length} / ${all.length} bookmarks`;
-  renderSidebar(getGroups());
+  const groups = getGroups();
+  renderSidebar(groups);
   els.list.innerHTML = "";
   openRelatedPanels.clear(); // old panels' DOM is about to be discarded
 
@@ -201,7 +269,7 @@ function render() {
     return;
   }
 
-  const group = getGroups().find((g) => g.key === selectedGroupKey);
+  const group = groups.find((g) => g.key === selectedGroupKey);
   if (!group) {
     els.list.innerHTML = `<div class="browse-hint">Select a topic on the left, or search above.</div>`;
     return;
@@ -274,7 +342,7 @@ function renderGroupView(group) {
     splitBtn.className = "split-btn";
     splitBtn.textContent = "Split into sub-topics";
     splitBtn.addEventListener("click", () => {
-      subClusters = computeClusters(group.members, SUB_CLUSTER_K).map((sg, i) => ({
+      subClusters = computeClusters(group.members, SUB_CLUSTER_K, ownTweetEmbeddings()).map((sg, i) => ({
         key: `sub-${i}`,
         label: sg.label,
         members: sg.members,
@@ -286,7 +354,10 @@ function renderGroupView(group) {
     header.appendChild(splitBtn);
   }
   els.list.appendChild(header);
-  for (const r of group.members) els.list.appendChild(renderCard(r));
+  const members = group.scores
+    ? [...group.members].sort((a, b) => group.scores.get(b.id) - group.scores.get(a.id))
+    : group.members;
+  for (const r of members) els.list.appendChild(renderCard(r, group.scores?.get(r.id)));
 }
 
 function renderFocused() {
@@ -299,7 +370,7 @@ function renderFocused() {
   els.list.appendChild(renderCard(focusedRecord));
 }
 
-function renderCard(r) {
+function renderCard(r, score) {
   const card = document.createElement("div");
   card.className = "card";
   card.innerHTML = `
@@ -313,6 +384,7 @@ function renderCard(r) {
     r.createdAt ? new Date(r.createdAt).toLocaleDateString() : ""
   }</a>
     </div>
+    ${typeof score === "number" ? `<div class="relevance-score">Relevance: ${score.toFixed(3)}</div>` : ""}
     <div class="text"></div>
     ${
       (r.mediaUrls || []).length

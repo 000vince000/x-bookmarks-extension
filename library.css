@@ -288,6 +288,12 @@ button {
   font-size: 12px;
 }
 
+.relevance-score {
+  color: #ffd400;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .tags {
   display: flex;
   flex-wrap: wrap;

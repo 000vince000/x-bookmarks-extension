@@ -156,7 +156,7 @@ function kmeans(vectors, k, iterations = 25) {
   return assignments;
 }
 
-export function computeClusters(records, k) {
+export function computeClusters(records, k, ownTweetEmbeddings = []) {
   const vectors = records.map((r) => r.embedding);
   const assignments = kmeans(vectors, Math.min(k, records.length));
   const groups = new Map();
@@ -167,6 +167,99 @@ export function computeClusters(records, k) {
   });
   const corpusDocFreq = buildCorpusDocFreq(records);
   return [...groups.values()]
-    .map((members) => ({ label: labelCluster(members, corpusDocFreq, records.length), members }))
+    .map((members) => {
+      const { centralId, scores } = mostRepresentativeId(
+        members,
+        ownTweetEmbeddings,
+        corpusDocFreq,
+        records.length
+      );
+      return {
+        label: labelCluster(members, corpusDocFreq, records.length),
+        members,
+        centralId,
+        scores, // Map<tweetId, personalRelevance> — every member, not just the winner
+      };
+    })
     .sort((a, b) => b.members.length - a.members.length);
+}
+
+function idf(word, corpusDocFreq, corpusSize) {
+  const df = corpusDocFreq.get(word) || 1;
+  return Math.log((corpusSize + 1) / (df + 1)) + 1;
+}
+
+// A tweet needs at least this many tokens before any text-derived score is
+// trusted at full strength — below this, near-empty text (a bare mention +
+// link, nothing else) isn't semantically trustworthy either way: not for
+// informativeness (no words to judge rarity from) and not for embedding
+// similarity (MiniLM's embedding for near-empty text is non-distinctive,
+// so it can look deceptively "similar" to other equally-thin text without
+// either one actually saying anything). Ramped, not a hard cutoff.
+const MIN_SUBSTANTIVE_TOKENS = 8;
+
+function lengthConfidence(tokenCount) {
+  return Math.min(1, tokenCount / MIN_SUBSTANTIVE_TOKENS);
+}
+
+// Average corpus-wide term rarity across a tweet's own tokens — a real
+// information-theoretic proxy for how much this specific wording actually
+// says, not just a length or engagement heuristic. Generic boilerplate
+// ("Today, X is widely recognized as...") is built almost entirely from
+// corpus-common words and scores low; text using more distinctive terms
+// scores higher. Averaged (not summed) so longer text doesn't win purely
+// by having more tokens, then discounted for tweets too short to trust
+// that average (see MIN_SUBSTANTIVE_TOKENS).
+function informativeness(text, corpusDocFreq, corpusSize) {
+  const tokens = tokenize(text);
+  if (!tokens.length) return 0;
+  const total = tokens.reduce((sum, w) => sum + idf(w, corpusDocFreq, corpusSize), 0);
+  return (total / tokens.length) * lengthConfidence(tokens.length);
+}
+
+// How closely a tweet resembles anything this account owner has personally
+// written — the max, not the average, over their own-tweets corpus. Max
+// (nearest-neighbor) rather than similarity-to-the-corpus-average, for the
+// same reason average-based cluster centrality got dropped: averaging
+// across thousands of your own tweets would wash out into a single bland
+// "voice centroid" that rewards generic content again. A max-similarity
+// match means "this specifically resembles something I personally cared
+// enough about to write," regardless of how that fits your overall average.
+function personalRelevance(text, embedding, ownTweetEmbeddings) {
+  if (!ownTweetEmbeddings.length) return 0;
+  let best = -Infinity;
+  for (const ownVec of ownTweetEmbeddings) {
+    let score = 0;
+    for (let d = 0; d < embedding.length; d++) score += embedding[d] * ownVec[d];
+    if (score > best) best = score;
+  }
+  // A near-empty tweet (bare mention + link, nothing else) can embed as
+  // deceptively "similar" to other equally-thin text without either one
+  // actually saying anything — discount the same way informativeness does.
+  return best * lengthConfidence(tokenize(text).length);
+}
+
+// The representative "start here" tweet for a topic: first narrow to the
+// candidates most similar to something the account owner has personally
+// tweeted (an external, stable reference — unlike in-cluster centrality,
+// it doesn't shift just because the cluster's membership changes as
+// bookmarks get deleted), then pick the most informative one among them,
+// so a merely-generic post can't win just for resembling your own voice
+// in a shallow way.
+function mostRepresentativeId(members, ownTweetEmbeddings, corpusDocFreq, corpusSize) {
+  const scores = new Map(members.map((r) => [r.id, personalRelevance(r.text, r.embedding, ownTweetEmbeddings)]));
+  if (members.length === 1) return { centralId: members[0].id, scores };
+
+  const ranked = [...members].sort((a, b) => scores.get(b.id) - scores.get(a.id));
+  const shortlist = ranked.slice(0, Math.max(3, Math.ceil(members.length * 0.2)));
+  let best = shortlist[0];
+  let bestScore = -Infinity;
+  for (const r of shortlist) {
+    const score = informativeness(r.text, corpusDocFreq, corpusSize);
+    if (score > bestScore) {
+      bestScore = score;
+      best = r;
+    }
+  }
+  return { centralId: best.id, scores };
 }
