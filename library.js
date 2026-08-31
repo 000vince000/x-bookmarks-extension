@@ -3,6 +3,7 @@ import {
   updateBookmarkMeta,
   setEmbedding,
   deleteBookmark as dbDeleteBookmark,
+  archiveBookmark as dbArchiveBookmark,
   getAllOwnTweets,
   setOwnTweetEmbedding,
 } from "./db.js";
@@ -370,6 +371,19 @@ function renderFocused() {
   els.list.appendChild(renderCard(focusedRecord));
 }
 
+function escapeHtml(text) {
+  return (text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Escape first, then linkify — the inserted <a> tags must not themselves
+// get escaped, and URLs don't contain the characters escapeHtml touches.
+function linkifyText(text) {
+  return escapeHtml(text).replace(
+    /(https?:\/\/\S+)/g,
+    (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`
+  );
+}
+
 function renderCard(r, score) {
   const card = document.createElement("div");
   card.className = "card";
@@ -395,15 +409,17 @@ function renderCard(r, score) {
     <div class="tags"></div>
     <input class="tag-input" placeholder="Add tag and press Enter">
     <textarea class="note-input" placeholder="Notes…"></textarea>
+    <div class="archived-badge" hidden>Archived from X</div>
     <div class="card-actions">
       <button class="related-toggle">Related</button>
+      <button class="archive-btn">Archive</button>
       <button class="delete-btn">Delete</button>
     </div>
     <div class="related-list"></div>
   `;
   card.querySelector(".name").textContent = r.authorName;
   card.querySelector(".handle").textContent = `@${r.authorHandle}`;
-  card.querySelector(".text").textContent = r.text;
+  card.querySelector(".text").innerHTML = linkifyText(r.text);
   card.querySelector(".note-input").value = r.note || "";
 
   const tagsEl = card.querySelector(".tags");
@@ -496,7 +512,44 @@ function renderCard(r, score) {
   const deleteBtn = card.querySelector(".delete-btn");
   deleteBtn.addEventListener("click", () => deleteBookmark(r));
 
+  const archiveBtn = card.querySelector(".archive-btn");
+  const archivedBadge = card.querySelector(".archived-badge");
+  if (r.archivedFromX) {
+    archivedBadge.hidden = false;
+    archiveBtn.disabled = true;
+  }
+  archiveBtn.addEventListener("click", async () => {
+    if (r.archivedFromX) return;
+    const ok = await archiveBookmark(r);
+    if (!ok) return;
+    archivedBadge.hidden = false;
+    archiveBtn.disabled = true;
+  });
+
   return card;
+}
+
+// Removes the bookmark from X (same unbookmark mutation as deleteBookmark)
+// but keeps the local record — so X's bookmark list can be pruned over
+// time without losing anything from the library. Stays visible wherever
+// it already is (its cluster/tags/embedding are untouched), just flagged.
+// Returns whether it actually succeeded, so the caller only updates the UI
+// on a real success (not a cancelled confirm or a failed X call).
+async function archiveBookmark(r) {
+  if (!confirm(`Remove this from X's bookmarks but keep it in your library?\n\n${r.text.slice(0, 100)}`)) {
+    return false;
+  }
+
+  const res = await chrome.runtime.sendMessage({ type: "DELETE_BOOKMARK", tweetId: r.id });
+  if (!res?.ok) {
+    alert(`Failed to remove from X: ${res?.error || "unknown error"}`);
+    return false;
+  }
+
+  await dbArchiveBookmark(r.id);
+  r.archivedFromX = true;
+  r.archivedAt = new Date().toISOString();
+  return true;
 }
 
 async function deleteBookmark(r) {

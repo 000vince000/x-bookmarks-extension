@@ -126,6 +126,30 @@ export async function deleteBookmark(id) {
   });
 }
 
+// Unlike deleteBookmark, keeps the local record — just flags it as no
+// longer live on X, so X's bookmark list can be pruned over time without
+// losing anything from the library.
+export async function archiveBookmark(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const rec = getReq.result;
+      if (!rec) {
+        reject(new Error(`bookmark ${id} not found`));
+        return;
+      }
+      rec.archivedFromX = true;
+      rec.archivedAt = new Date().toISOString();
+      store.put(rec);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 // Own-tweets corpus — mirrors upsertBookmarks/setEmbedding's shape, minus
 // tags/notes (meaningless here) but keeping the same text-change-invalidates
 // embedding safeguard.

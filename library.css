@@ -55,10 +55,17 @@ button {
 
 #embedControls {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
   padding: 10px 20px;
   border-bottom: 1px solid #2f3336;
+}
+
+.control-divider {
+  width: 1px;
+  align-self: stretch;
+  background: #2f3336;
 }
 
 #embedStatus {
@@ -270,6 +277,10 @@ button {
   font-size: 13px;
 }
 
+.text a {
+  color: #1d9bf0;
+}
+
 .media {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
@@ -341,6 +352,21 @@ button {
 
 .delete-btn:hover {
   background: #2a1418;
+}
+
+.archive-btn {
+  font-size: 12px;
+}
+
+.archive-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.archived-badge {
+  color: #ffd400;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .related-list {
