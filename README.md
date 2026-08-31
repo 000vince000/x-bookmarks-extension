@@ -22,6 +22,7 @@ X.com's bookmarks UI has no real search or filtering, and there's no free bulk A
 ## Known limitations
 
 - **X Articles** — `parse.js` now pulls in `tweet.article.article_results.result`'s `title` + `preview_text` (checked on both the outer tweet and a quoted tweet), instead of just the bare article URL that `legacy.full_text` gives for an article-share. Note `preview_text` is a truncated excerpt, not the full article body — X doesn't expose the complete text via this endpoint, so this is a real improvement but not complete capture.
+- **Long "Note Tweets"** — for X's extended-length tweets (the ones with a "Show more" cutoff on X's own UI), `legacy.full_text` is often just a truncated preview, not the real content. `parse.js`'s `extractFullText` now prefers `tweet.note_tweet.note_tweet_results.result.text` when present, falling back to `legacy.full_text` for normal tweets. Verified against synthetic data matching the documented shape, not yet confirmed against a real captured long tweet.
 - **Video thumbnails** — `library.js` now renders `.mp4` media URLs as `<video>` instead of `<img>` (detected purely from the URL, so it applies to already-captured data too, no re-capture needed). The original bug (wrong tag for the content type) is fixed; untested whether X's video CDN still resets the connection for requests from a `chrome-extension://` origin regardless of tag type — if videos still fail to load, that's the next thing to check.
 
 ## Status

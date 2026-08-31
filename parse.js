@@ -37,6 +37,15 @@ function decodeHtmlEntities(text) {
     .replace(/&amp;/g, "&");
 }
 
+// Long-form "Note Tweets" (X's extended-length tweet feature) store their
+// real content separately from legacy.full_text, which for these tweets is
+// often just a truncated preview — matching X's own UI "Show more" cutoff
+// for long tweets, not the actual complete text.
+function extractFullText(tweetObj) {
+  const noteText = tweetObj?.note_tweet?.note_tweet_results?.result?.text;
+  return decodeHtmlEntities(noteText || tweetObj?.legacy?.full_text || "");
+}
+
 function unwrapTweetResult(result) {
   if (!result) return null;
   if (result.__typename === "TweetWithVisibilityResults") return result.tweet;
@@ -69,7 +78,7 @@ function extractQuoted(tweet) {
   const quoted = unwrapTweetResult(tweet.quoted_status_result?.result);
   if (!quoted?.legacy) return null;
   const handle = extractScreenName(quoted.core?.user_results?.result);
-  const text = extractArticleText(quoted) || decodeHtmlEntities(quoted.legacy.full_text || "");
+  const text = extractArticleText(quoted) || extractFullText(quoted);
   if (!text) return null;
   return handle ? `Quoting @${handle}: ${text}` : `Quoting: ${text}`;
 }
@@ -95,9 +104,7 @@ function parseTweet(tweetResult) {
     const media = legacy.extended_entities?.media || legacy.entities?.media || [];
     const quoted = extractQuoted(tweet);
     const ownArticle = extractArticleText(tweet);
-    const text = [decodeHtmlEntities(legacy.full_text || ""), ownArticle, quoted]
-      .filter(Boolean)
-      .join("\n\n");
+    const text = [extractFullText(tweet), ownArticle, quoted].filter(Boolean).join("\n\n");
 
     return {
       id: tweet.rest_id,
