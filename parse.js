@@ -20,6 +20,23 @@ function extractMediaUrls(mediaArray) {
     .filter(Boolean);
 }
 
+// X's API sometimes returns full_text with <, >, & already HTML-entity-
+// encoded (a legacy quirk) rather than as raw characters — decoded here so
+// stored text is the real content, not markup. Left un-decoded, this
+// pollutes embeddings/tokenization/search, not just display (and would
+// double-escape into a visible "&lt;" if the UI HTML-escapes it for
+// rendering, since it'd be escaping an "&" that's already part of an
+// entity). Order matters: specific entities before &amp;, so a literal
+// "&amp;lt;" decodes to the literal text "&lt;", not to "<".
+function decodeHtmlEntities(text) {
+  return (text || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
 function unwrapTweetResult(result) {
   if (!result) return null;
   if (result.__typename === "TweetWithVisibilityResults") return result.tweet;
@@ -42,7 +59,7 @@ function extractQuoted(tweet) {
   const quoted = unwrapTweetResult(tweet.quoted_status_result?.result);
   if (!quoted?.legacy) return null;
   const handle = extractScreenName(quoted.core?.user_results?.result);
-  const text = quoted.legacy.full_text || "";
+  const text = decodeHtmlEntities(quoted.legacy.full_text || "");
   if (!text) return null;
   return handle ? `Quoting @${handle}: ${text}` : `Quoting: ${text}`;
 }
@@ -73,7 +90,9 @@ function parseTweet(tweetResult) {
       authorHandle: screenName || "unknown",
       authorName: userCore?.name || userLegacy?.name || "unknown",
       authorAvatar: userAvatar?.image_url || userLegacy?.profile_image_url_https || "",
-      text: quoted ? `${legacy.full_text || ""}\n\n${quoted}` : legacy.full_text || "",
+      text: quoted
+        ? `${decodeHtmlEntities(legacy.full_text || "")}\n\n${quoted}`
+        : decodeHtmlEntities(legacy.full_text || ""),
       createdAt: legacy.created_at ? new Date(legacy.created_at).toISOString() : null,
       capturedAt: new Date().toISOString(),
       mediaUrls: extractMediaUrls(media),
