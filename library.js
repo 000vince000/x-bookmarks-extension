@@ -26,6 +26,17 @@ const openRelatedPanels = new Set(); // refresh callbacks for currently-open "Re
 const SUB_CLUSTER_K = 5;
 const SUB_CLUSTER_MIN_SIZE = 12; // below this, splitting isn't worth offering
 
+// In-memory only, resets on reload — deleted records leave no trace to
+// reconstruct a persistent count from anyway, and session-scoped progress
+// ("how much have I cleaned up right now") is what's actually useful here,
+// not a stored daily log.
+let sessionArchived = 0;
+let sessionDeleted = 0;
+
+function updateSessionStats() {
+  els.sessionStats.textContent = `This session: ${sessionArchived} archived, ${sessionDeleted} deleted`;
+}
+
 const els = {
   search: document.getElementById("search"),
   authorFilter: document.getElementById("authorFilter"),
@@ -34,6 +45,7 @@ const els = {
   sidebar: document.getElementById("sidebar"),
   list: document.getElementById("list"),
   count: document.getElementById("count"),
+  sessionStats: document.getElementById("sessionStats"),
   embedBtn: document.getElementById("embedBtn"),
   embedStatus: document.getElementById("embedStatus"),
   clusterK: document.getElementById("clusterK"),
@@ -50,6 +62,7 @@ async function load() {
   applyFilters();
   updateEmbedStatus();
   updateOwnTweetStatus();
+  updateSessionStats();
 }
 
 function updateEmbedStatus() {
@@ -259,8 +272,18 @@ function selectGroup(key) {
   clearSearchAndFilters();
 }
 
+// "X / Y bookmarks" only makes sense once a filter is actually narrowing
+// things — with none active, filtered === all, so showing the same number
+// twice is just noise. Unfiltered, show the bookmarked/archived split
+// instead (mutually exclusive — archivedFromX is only ever set by Archive).
+function countsLabel() {
+  if (searchActive) return `${filtered.length} / ${all.length} bookmarks`;
+  const archivedCount = all.filter((r) => r.archivedFromX).length;
+  return `${all.length - archivedCount} bookmarked · ${archivedCount} archived`;
+}
+
 function render() {
-  els.count.textContent = `${filtered.length} / ${all.length} bookmarks`;
+  els.count.textContent = countsLabel();
   const groups = getGroups();
   renderSidebar(groups);
   els.list.innerHTML = "";
@@ -282,10 +305,50 @@ function render() {
 
   const group = groups.find((g) => g.key === selectedGroupKey);
   if (!group) {
-    els.list.innerHTML = `<div class="browse-hint">Select a topic on the left, or search above.</div>`;
+    renderLanding(groups);
     return;
   }
   renderGroupView(group);
+}
+
+const LANDING_TOP_N = 3;
+
+// Must match OWN_HANDLE in parse.js — duplicated, not imported, since
+// library.js (extension page) and parse.js (content script) run in
+// separate contexts that don't share module scope.
+const OWN_HANDLE = "vinnygarr";
+
+// Top picks across the whole library by relevance score, as-is — no
+// recompute, just reusing each group's already-computed `scores` (personal
+// relevance is an absolute score, comparable across topics, unlike the old
+// in-cluster centrality metric). "Unsorted" has no scores at all and is
+// naturally excluded by that. Your own bookmarked tweets are excluded too —
+// they trivially score near-perfect similarity against your own corpus,
+// which isn't a meaningful "pick." Archived tweets are excluded from picks
+// specifically (already cleaned up, no need to resurface) but stay fully
+// part of their cluster/topic view — this filter doesn't touch getGroups.
+function renderLanding(groups) {
+  const ranked = groups
+    .filter((g) => g.scores)
+    .flatMap((g) => g.members.filter((r) => g.scores.has(r.id)).map((r) => ({ r, score: g.scores.get(r.id) })))
+    .filter(({ r }) => r.authorHandle.toLowerCase() !== OWN_HANDLE && !r.archivedFromX)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, LANDING_TOP_N);
+
+  if (!ranked.length) {
+    els.list.innerHTML = `<div class="browse-hint">Select a topic on the left, or search above.</div>`;
+    return;
+  }
+
+  const intro = document.createElement("div");
+  intro.className = "browse-hint";
+  intro.textContent = "Top picks — or select a topic on the left, or search above.";
+  els.list.appendChild(intro);
+  const scoreById = new Map(ranked.map(({ r, score }) => [r.id, score]));
+  appendCardColumns(
+    ranked.map(({ r }) => r),
+    (r) => scoreById.get(r.id)
+  );
 }
 
 // Cards flow into a dedicated multi-column wrapper (real masonry packing —
@@ -492,6 +555,7 @@ function renderCard(r, score) {
     <textarea class="note-input" placeholder="Notes…"></textarea>
     <div class="archived-badge" hidden>Archived from X</div>
     <div class="card-actions">
+      <a class="view-on-x" href="${r.url}" target="_blank" rel="noopener">View on X</a>
       <button class="related-toggle">Related</button>
       <button class="archive-btn">Archive</button>
       <button class="delete-btn">Delete</button>
@@ -554,7 +618,12 @@ function renderCard(r, score) {
     // Recomputed fresh (not cached) since the threshold is a live,
     // user-adjustable control — cheap enough at personal-library scale.
     const minScore = Number(els.relatedMinScore.value) || 0;
-    const results = topRelated(r, all, 5, minScore);
+    // Exclude anything already in the breadcrumb trail (A > B > C shouldn't
+    // suggest A or B again from C) — a no-op when not in focus mode, since
+    // focusStack is empty there.
+    const breadcrumbIds = new Set(focusStack.map((x) => x.id));
+    const candidates = breadcrumbIds.size ? all.filter((x) => !breadcrumbIds.has(x.id)) : all;
+    const results = topRelated(r, candidates, 5, minScore);
     relatedList.innerHTML = results.length
       ? results
           .map(
@@ -573,6 +642,11 @@ function renderCard(r, score) {
       el.addEventListener("click", () => {
         const target = all.find((x) => x.id === el.dataset.id);
         if (target) {
+          // First hop from a non-focused view (topic/search) — the card you
+          // clicked Related *from* becomes the root of the breadcrumb, not
+          // just the target. Already-focused hops don't re-push r, since
+          // it's already the stack's current top.
+          if (!focusStack.length) focusStack.push(r);
           focusStack.push(target);
           render();
         }
@@ -630,6 +704,8 @@ async function archiveBookmark(r) {
   await dbArchiveBookmark(r.id);
   r.archivedFromX = true;
   r.archivedAt = new Date().toISOString();
+  sessionArchived++;
+  updateSessionStats();
   return true;
 }
 
@@ -661,6 +737,8 @@ async function deleteBookmark(r) {
   if (focusStack.length && focusStack[focusStack.length - 1].id === r.id) {
     focusStack.pop();
   }
+  sessionDeleted++;
+  updateSessionStats();
   applyFilters();
 }
 

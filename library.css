@@ -22,7 +22,8 @@ header h1 {
   margin: 0;
 }
 
-#count {
+#count,
+#sessionStats {
   color: #8b98a5;
   font-size: 13px;
 }
@@ -353,6 +354,23 @@ button {
 .card-actions {
   display: flex;
   gap: 8px;
+}
+
+.view-on-x {
+  background: #1a2430;
+  color: #e7e9ea;
+  border: 1px solid #2f3336;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.view-on-x:hover {
+  background: #22303f;
 }
 
 .related-toggle {
