@@ -21,8 +21,8 @@ X.com's bookmarks UI has no real search or filtering, and there's no free bulk A
 
 ## Known limitations
 
-- **Quoted X Articles aren't captured.** `parse.js` unwraps a quote-tweet's nested `quoted_status_result` to pull in the quoted tweet's text, but if the quoted content is an X Article (long-form post) rather than a normal tweet, `legacy.full_text` on it is just the article's URL — the actual title/body lives in a different, not-yet-identified part of the response. TODO: find that shape and pull in at least the article title.
-- **Video thumbnails render broken.** `library.js`'s card rendering puts every media URL — including `.mp4` video URLs extracted by `parse.js` — into a plain `<img>` tag. Browsers can't decode video as an image, and X's video CDN resets the connection for these requests from a `chrome-extension://` origin. TODO: render `<video>` for video media instead of `<img>`.
+- **X Articles** — `parse.js` now pulls in `tweet.article.article_results.result`'s `title` + `preview_text` (checked on both the outer tweet and a quoted tweet), instead of just the bare article URL that `legacy.full_text` gives for an article-share. Note `preview_text` is a truncated excerpt, not the full article body — X doesn't expose the complete text via this endpoint, so this is a real improvement but not complete capture.
+- **Video thumbnails** — `library.js` now renders `.mp4` media URLs as `<video>` instead of `<img>` (detected purely from the URL, so it applies to already-captured data too, no re-capture needed). The original bug (wrong tag for the content type) is fixed; untested whether X's video CDN still resets the connection for requests from a `chrome-extension://` origin regardless of tag type — if videos still fail to load, that's the next thing to check.
 
 ## Status
 

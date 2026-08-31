@@ -202,6 +202,15 @@ function lengthConfidence(tokenCount) {
   return Math.min(1, tokenCount / MIN_SUBSTANTIVE_TOKENS);
 }
 
+// Same bar, applied on the *reference* side: a thin/no-context tweet of
+// yours shouldn't be eligible as a personalRelevance anchor at all —
+// otherwise it can inflate some unrelated bookmark's score just by both
+// being equally content-free (see personalRelevance's discount for the
+// candidate side of this same problem).
+export function isSubstantive(text) {
+  return tokenize(text).length >= MIN_SUBSTANTIVE_TOKENS;
+}
+
 // Average corpus-wide term rarity across a tweet's own tokens — a real
 // information-theoretic proxy for how much this specific wording actually
 // says, not just a length or engagement heuristic. Generic boilerplate

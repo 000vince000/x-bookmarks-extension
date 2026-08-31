@@ -51,6 +51,16 @@ function extractScreenName(userResult) {
   return userResult?.core?.screen_name || userResult?.legacy?.screen_name || "";
 }
 
+// An X Article (long-form post) attached to a tweet — either the outer
+// tweet's own attachment or a quoted tweet's — has its title/preview text
+// here, not in legacy.full_text (which for an article-share is just the
+// article's bare URL).
+function extractArticleText(tweetObj) {
+  const article = tweetObj?.article?.article_results?.result;
+  if (!article) return null;
+  return [article.title, article.preview_text].filter(Boolean).join("\n\n");
+}
+
 // Quote tweets nest the quoted tweet the same way the outer entry nests its
 // own tweet_results — without this, `legacy.full_text` on the outer tweet is
 // often just a one-word reaction ("Troubling") with the actual substance
@@ -59,7 +69,7 @@ function extractQuoted(tweet) {
   const quoted = unwrapTweetResult(tweet.quoted_status_result?.result);
   if (!quoted?.legacy) return null;
   const handle = extractScreenName(quoted.core?.user_results?.result);
-  const text = decodeHtmlEntities(quoted.legacy.full_text || "");
+  const text = extractArticleText(quoted) || decodeHtmlEntities(quoted.legacy.full_text || "");
   if (!text) return null;
   return handle ? `Quoting @${handle}: ${text}` : `Quoting: ${text}`;
 }
@@ -84,15 +94,17 @@ function parseTweet(tweetResult) {
     }
     const media = legacy.extended_entities?.media || legacy.entities?.media || [];
     const quoted = extractQuoted(tweet);
+    const ownArticle = extractArticleText(tweet);
+    const text = [decodeHtmlEntities(legacy.full_text || ""), ownArticle, quoted]
+      .filter(Boolean)
+      .join("\n\n");
 
     return {
       id: tweet.rest_id,
       authorHandle: screenName || "unknown",
       authorName: userCore?.name || userLegacy?.name || "unknown",
       authorAvatar: userAvatar?.image_url || userLegacy?.profile_image_url_https || "",
-      text: quoted
-        ? `${decodeHtmlEntities(legacy.full_text || "")}\n\n${quoted}`
-        : decodeHtmlEntities(legacy.full_text || ""),
+      text,
       createdAt: legacy.created_at ? new Date(legacy.created_at).toISOString() : null,
       capturedAt: new Date().toISOString(),
       mediaUrls: extractMediaUrls(media),
