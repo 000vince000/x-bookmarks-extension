@@ -8,7 +8,7 @@ import {
   setOwnTweetEmbedding,
 } from "./db.js";
 import { embedAllMissing, topRelated } from "./embeddings.js";
-import { computeClusters } from "./clusters.js";
+import { computeClusters, isSubstantive } from "./clusters.js";
 
 const DEFAULT_K = 35;
 
@@ -21,7 +21,7 @@ let selectedGroupKey = null; // which sidebar topic is open; null = landing stat
 let subClusters = null; // sub-topic breakdown of the currently selected group, if split
 let subGroupParentKey = null; // which group `subClusters` belongs to
 let selectedSubKey = null; // which sub-topic tile is open, within subClusters
-let focusedRecord = null; // single-card view entered via clicking a Related item
+let focusStack = []; // chain of records reached via "Related" clicks; last = shown card
 const openRelatedPanels = new Set(); // refresh callbacks for currently-open "Related" panels
 const SUB_CLUSTER_K = 5;
 const SUB_CLUSTER_MIN_SIZE = 12; // below this, splitting isn't worth offering
@@ -63,10 +63,11 @@ function updateOwnTweetStatus() {
   els.ownTweetStatus.textContent = `Own tweets: ${embedded}/${ownTweets.length} embedded`;
 }
 
-// Only tweets with an embedding are usable as a personal-relevance
-// reference — passed into computeClusters wherever it's called.
+// Only tweets with an embedding, and enough real text to be a trustworthy
+// reference (a thin/no-context tweet of yours shouldn't be eligible as an
+// anchor — see isSubstantive), feed into personal-relevance scoring.
 function ownTweetEmbeddings() {
-  return ownTweets.filter((r) => r.embedding).map((r) => r.embedding);
+  return ownTweets.filter((r) => r.embedding && isSubstantive(r.text)).map((r) => r.embedding);
 }
 
 let embedding = false;
@@ -109,7 +110,7 @@ function resetDrillDown() {
   subClusters = null;
   subGroupParentKey = null;
   selectedSubKey = null;
-  focusedRecord = null;
+  focusStack = [];
 }
 
 let ownTweetEmbedding = false;
@@ -175,7 +176,6 @@ function populateFilters() {
 }
 
 function applyFilters() {
-  focusedRecord = null; // any real navigation action exits single-card focus mode
   const q = els.search.value.trim().toLowerCase();
   const author = els.authorFilter.value;
   const tag = els.tagFilter.value;
@@ -200,6 +200,16 @@ function clearSearchAndFilters() {
   els.authorFilter.value = "";
   els.tagFilter.value = "";
   els.mediaOnly.checked = false;
+  focusStack = []; // real navigation (e.g. sidebar click) exits single-card focus mode
+  applyFilters();
+}
+
+// Wraps applyFilters for the raw search/filter inputs specifically — typing
+// a search or changing a filter should exit focus mode, but not every
+// applyFilters() caller wants that (deleteBookmark needs finer control, so
+// it can trim just the deleted entry from the stack instead of wiping it).
+function applyFiltersFromInput() {
+  focusStack = [];
   applyFilters();
 }
 
@@ -256,7 +266,7 @@ function render() {
   els.list.innerHTML = "";
   openRelatedPanels.clear(); // old panels' DOM is about to be discarded
 
-  if (focusedRecord) {
+  if (focusStack.length) {
     renderFocused();
     return;
   }
@@ -266,7 +276,7 @@ function render() {
       els.list.innerHTML = `<div class="browse-hint">No matches.</div>`;
       return;
     }
-    for (const r of filtered) els.list.appendChild(renderCard(r));
+    appendCardColumns(filtered);
     return;
   }
 
@@ -276,6 +286,17 @@ function render() {
     return;
   }
   renderGroupView(group);
+}
+
+// Cards flow into a dedicated multi-column wrapper (real masonry packing —
+// see .card-columns in library.css) rather than directly into #list, which
+// also holds header/breadcrumb elements that need to stay full-width above
+// the cards instead of getting sucked into the column flow.
+function appendCardColumns(records, scoreFn) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "card-columns";
+  for (const r of records) wrapper.appendChild(renderCard(r, scoreFn?.(r)));
+  els.list.appendChild(wrapper);
 }
 
 function crumbHeader(backLabel, currentLabel, onBack) {
@@ -307,7 +328,7 @@ function renderGroupView(group) {
           render();
         })
       );
-      for (const r of subGroup.members) els.list.appendChild(renderCard(r));
+      appendCardColumns(subGroup.members);
       return;
     }
 
@@ -358,17 +379,46 @@ function renderGroupView(group) {
   const members = group.scores
     ? [...group.members].sort((a, b) => group.scores.get(b.id) - group.scores.get(a.id))
     : group.members;
-  for (const r of members) els.list.appendChild(renderCard(r, group.scores?.get(r.id)));
+  appendCardColumns(members, group.scores ? (r) => group.scores.get(r.id) : undefined);
 }
 
+// Full trail of authors reached via "Related" clicks (@A › @B › @C › @D),
+// not just a single "← Back" — each prior segment jumps back to that point
+// in the chain; a leading "← Back" exits focus mode entirely.
 function renderFocused() {
-  els.list.appendChild(
-    crumbHeader("Back", "", () => {
-      focusedRecord = null;
-      render();
-    })
-  );
-  els.list.appendChild(renderCard(focusedRecord));
+  const header = document.createElement("div");
+  header.className = "group-header";
+
+  const backBtn = document.createElement("button");
+  backBtn.className = "crumb-back";
+  backBtn.textContent = "← Back";
+  backBtn.addEventListener("click", () => {
+    focusStack = [];
+    render();
+  });
+  header.appendChild(backBtn);
+
+  focusStack.forEach((r, i) => {
+    const sep = document.createElement("span");
+    sep.className = "crumb-current";
+    sep.textContent = " › ";
+    header.appendChild(sep);
+
+    const isLast = i === focusStack.length - 1;
+    const seg = document.createElement(isLast ? "span" : "button");
+    seg.className = isLast ? "crumb-current" : "crumb-back";
+    seg.textContent = `@${r.authorHandle}`;
+    if (!isLast) {
+      seg.addEventListener("click", () => {
+        focusStack = focusStack.slice(0, i + 1);
+        render();
+      });
+    }
+    header.appendChild(seg);
+  });
+
+  els.list.appendChild(header);
+  appendCardColumns([focusStack[focusStack.length - 1]]);
 }
 
 function escapeHtml(text) {
@@ -382,6 +432,18 @@ function linkifyText(text) {
     /(https?:\/\/\S+)/g,
     (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`
   );
+}
+
+// extractMediaUrls (parse.js) resolves video/animated_gif entries to their
+// .mp4 variant URL — that's a reliable enough signal to tell video apart
+// from photo purely from the URL, without needing a schema change (works
+// retroactively on already-captured data too, not just new captures).
+const VIDEO_URL_PATTERN = /\.mp4(\?|$)/i;
+
+function renderMediaItem(url) {
+  return VIDEO_URL_PATTERN.test(url)
+    ? `<video src="${url}" controls></video>`
+    : `<img src="${url}">`;
 }
 
 function renderCard(r, score) {
@@ -402,7 +464,7 @@ function renderCard(r, score) {
     <div class="text"></div>
     ${
       (r.mediaUrls || []).length
-        ? `<div class="media">${r.mediaUrls.map((u) => `<img src="${u}">`).join("")}</div>`
+        ? `<div class="media">${r.mediaUrls.map(renderMediaItem).join("")}</div>`
         : ""
     }
     <div class="stats">♥ ${r.likeCount} · ↺ ${r.retweetCount} · ↩ ${r.replyCount}</div>
@@ -492,7 +554,7 @@ function renderCard(r, score) {
       el.addEventListener("click", () => {
         const target = all.find((x) => x.id === el.dataset.id);
         if (target) {
-          focusedRecord = target;
+          focusStack.push(target);
           render();
         }
       });
@@ -570,18 +632,22 @@ async function deleteBookmark(r) {
     for (const g of clusters) g.members = g.members.filter((x) => x.id !== r.id);
   }
   // Sub-cluster membership isn't worth the same surgical treatment for a
-  // single delete — just drop back to the flat topic view. applyFilters()
-  // below also clears focusedRecord unconditionally, exiting focus mode if
-  // the deleted card was the one being viewed.
+  // single delete — just drop back to the flat topic view.
   subClusters = null;
   subGroupParentKey = null;
   selectedSubKey = null;
+  // Only the deleted card itself can be showing while focused (it's always
+  // the last entry — see renderFocused) — pop just that, so the rest of the
+  // breadcrumb trail survives instead of the whole chain being discarded.
+  if (focusStack.length && focusStack[focusStack.length - 1].id === r.id) {
+    focusStack.pop();
+  }
   applyFilters();
 }
 
-els.search.addEventListener("input", applyFilters);
-els.authorFilter.addEventListener("change", applyFilters);
-els.tagFilter.addEventListener("change", applyFilters);
-els.mediaOnly.addEventListener("change", applyFilters);
+els.search.addEventListener("input", applyFiltersFromInput);
+els.authorFilter.addEventListener("change", applyFiltersFromInput);
+els.tagFilter.addEventListener("change", applyFiltersFromInput);
+els.mediaOnly.addEventListener("change", applyFiltersFromInput);
 
 load();

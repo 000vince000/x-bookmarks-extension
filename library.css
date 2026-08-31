@@ -151,10 +151,10 @@ button {
 }
 
 .group-header {
-  grid-column: 1 / -1;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: 4px;
   padding-bottom: 8px;
   border-bottom: 1px solid #2f3336;
 }
@@ -192,7 +192,6 @@ button {
 }
 
 .subtile-grid {
-  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 8px;
@@ -224,10 +223,16 @@ button {
 }
 
 #list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 12px;
   padding: 16px 20px;
+}
+
+/* Real masonry packing (CSS multi-column) instead of a grid, where every
+   card in a row gets stretched to match the tallest one — a short tweet no
+   longer wastes space next to a long one; the next card just flows into
+   whatever room is left in its column. */
+.card-columns {
+  columns: 320px;
+  column-gap: 12px;
 }
 
 .card {
@@ -238,6 +243,8 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  break-inside: avoid;
+  margin-bottom: 12px;
 }
 
 .card-header {
@@ -287,7 +294,8 @@ button {
   gap: 4px;
 }
 
-.media img {
+.media img,
+.media video {
   width: 100%;
   border-radius: 6px;
   object-fit: cover;
