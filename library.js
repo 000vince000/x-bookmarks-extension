@@ -446,9 +446,23 @@ function renderMediaItem(url) {
     : `<img src="${url}">`;
 }
 
+// Cheap content-type badges — video/image derived from mediaUrls at render
+// time (same VIDEO_URL_PATTERN used for rendering the media itself);
+// article/quote come from flags parse.js already computed at capture time.
+function contentBadges(r) {
+  const badges = [];
+  if (r.hasArticle) badges.push("X Article");
+  if (r.isQuote) badges.push("Quote");
+  const media = r.mediaUrls || [];
+  if (media.some((u) => VIDEO_URL_PATTERN.test(u))) badges.push("Video");
+  else if (media.length) badges.push("Image");
+  return badges;
+}
+
 function renderCard(r, score) {
   const card = document.createElement("div");
   card.className = "card";
+  const badges = contentBadges(r);
   card.innerHTML = `
     <div class="card-header">
       <img src="${r.authorAvatar || ""}" alt="" class="avatar">
@@ -461,6 +475,11 @@ function renderCard(r, score) {
   }</a>
     </div>
     ${typeof score === "number" ? `<div class="relevance-score">Relevance: ${score.toFixed(3)}</div>` : ""}
+    ${
+      badges.length
+        ? `<div class="content-badges">${badges.map((b) => `<span class="content-badge">[${b}]</span>`).join("")}</div>`
+        : ""
+    }
     <div class="text"></div>
     ${
       (r.mediaUrls || []).length

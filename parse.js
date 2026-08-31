@@ -73,9 +73,10 @@ function extractArticleText(tweetObj) {
 // Quote tweets nest the quoted tweet the same way the outer entry nests its
 // own tweet_results — without this, `legacy.full_text` on the outer tweet is
 // often just a one-word reaction ("Troubling") with the actual substance
-// sitting unread in this nested field.
-function extractQuoted(tweet) {
-  const quoted = unwrapTweetResult(tweet.quoted_status_result?.result);
+// sitting unread in this nested field. Takes the already-unwrapped quoted
+// tweet object (shared with the hasArticle/isQuote flags below) rather than
+// re-unwrapping internally.
+function extractQuotedText(quoted) {
   if (!quoted?.legacy) return null;
   const handle = extractScreenName(quoted.core?.user_results?.result);
   const text = extractArticleText(quoted) || extractFullText(quoted);
@@ -102,8 +103,10 @@ function parseTweet(tweetResult) {
       });
     }
     const media = legacy.extended_entities?.media || legacy.entities?.media || [];
-    const quoted = extractQuoted(tweet);
+    const quotedTweet = unwrapTweetResult(tweet.quoted_status_result?.result);
+    const quoted = extractQuotedText(quotedTweet);
     const ownArticle = extractArticleText(tweet);
+    const quotedArticle = extractArticleText(quotedTweet);
     const text = [extractFullText(tweet), ownArticle, quoted].filter(Boolean).join("\n\n");
 
     return {
@@ -112,6 +115,11 @@ function parseTweet(tweetResult) {
       authorName: userCore?.name || userLegacy?.name || "unknown",
       authorAvatar: userAvatar?.image_url || userLegacy?.profile_image_url_https || "",
       text,
+      // Cheap content-type signal for the library UI's [Video]/[Image]/
+      // [X Article]/[Quote] badges — video/image are derived from mediaUrls
+      // at render time instead, no need to store those separately.
+      hasArticle: !!(ownArticle || quotedArticle),
+      isQuote: !!quoted,
       createdAt: legacy.created_at ? new Date(legacy.created_at).toISOString() : null,
       capturedAt: new Date().toISOString(),
       mediaUrls: extractMediaUrls(media),
