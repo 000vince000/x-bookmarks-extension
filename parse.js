@@ -70,6 +70,18 @@ function extractArticleText(tweetObj) {
   return [article.title, article.preview_text].filter(Boolean).join("\n\n");
 }
 
+// External links a tweet points to, for the library's "Link" filter/badge.
+// entities.urls also carries the t.co link to a quoted tweet (and, for an
+// X Article share, the article's own x.com link) — both already surfaced
+// via isQuote/hasArticle, so anything hosted on x.com/twitter.com is
+// excluded here to keep this signal specific to outside links.
+function extractExternalLinks(tweetObj) {
+  const urls = tweetObj?.legacy?.entities?.urls || [];
+  return urls
+    .map((u) => u.expanded_url || u.url)
+    .filter((u) => u && !/^https?:\/\/(www\.)?(x|twitter)\.com\//i.test(u));
+}
+
 // Quote tweets nest the quoted tweet the same way the outer entry nests its
 // own tweet_results — without this, `legacy.full_text` on the outer tweet is
 // often just a one-word reaction ("Troubling") with the actual substance
@@ -108,6 +120,9 @@ function parseTweet(tweetResult) {
     const ownArticle = extractArticleText(tweet);
     const quotedArticle = extractArticleText(quotedTweet);
     const text = [extractFullText(tweet), ownArticle, quoted].filter(Boolean).join("\n\n");
+    const externalLinks = [
+      ...new Set([...extractExternalLinks(tweet), ...extractExternalLinks(quotedTweet)]),
+    ];
 
     return {
       id: tweet.rest_id,
@@ -116,10 +131,11 @@ function parseTweet(tweetResult) {
       authorAvatar: userAvatar?.image_url || userLegacy?.profile_image_url_https || "",
       text,
       // Cheap content-type signal for the library UI's [Video]/[Image]/
-      // [X Article]/[Quote] badges — video/image are derived from mediaUrls
-      // at render time instead, no need to store those separately.
+      // [X Article]/[Quote]/[Link] badges — video/image are derived from
+      // mediaUrls at render time instead, no need to store those separately.
       hasArticle: !!(ownArticle || quotedArticle),
       isQuote: !!quoted,
+      externalLinks,
       createdAt: legacy.created_at ? new Date(legacy.created_at).toISOString() : null,
       capturedAt: new Date().toISOString(),
       mediaUrls: extractMediaUrls(media),

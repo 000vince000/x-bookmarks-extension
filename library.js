@@ -41,7 +41,10 @@ const els = {
   search: document.getElementById("search"),
   authorFilter: document.getElementById("authorFilter"),
   tagFilter: document.getElementById("tagFilter"),
-  mediaOnly: document.getElementById("mediaOnly"),
+  filterImage: document.getElementById("filterImage"),
+  filterVideo: document.getElementById("filterVideo"),
+  filterArticle: document.getElementById("filterArticle"),
+  filterLink: document.getElementById("filterLink"),
   sidebar: document.getElementById("sidebar"),
   list: document.getElementById("list"),
   count: document.getElementById("count"),
@@ -192,13 +195,28 @@ function applyFilters() {
   const q = els.search.value.trim().toLowerCase();
   const author = els.authorFilter.value;
   const tag = els.tagFilter.value;
-  const mediaOnly = els.mediaOnly.checked;
-  searchActive = !!(q || author || tag || mediaOnly);
+  const typeFilters = {
+    image: els.filterImage.checked,
+    video: els.filterVideo.checked,
+    article: els.filterArticle.checked,
+    link: els.filterLink.checked,
+  };
+  const anyTypeFilter = Object.values(typeFilters).some(Boolean);
+  searchActive = !!(q || author || tag || anyTypeFilter);
 
   filtered = all.filter((r) => {
     if (author && r.authorHandle !== author) return false;
     if (tag && !(r.tags || []).includes(tag)) return false;
-    if (mediaOnly && !(r.mediaUrls || []).length) return false;
+    if (
+      anyTypeFilter &&
+      !(
+        (typeFilters.image && hasImage(r)) ||
+        (typeFilters.video && hasVideo(r)) ||
+        (typeFilters.article && r.hasArticle) ||
+        (typeFilters.link && hasLink(r))
+      )
+    )
+      return false;
     if (q) {
       const hay = `${r.text} ${r.authorHandle} ${r.authorName} ${(r.tags || []).join(" ")}`.toLowerCase();
       if (!hay.includes(q)) return false;
@@ -212,7 +230,10 @@ function clearSearchAndFilters() {
   els.search.value = "";
   els.authorFilter.value = "";
   els.tagFilter.value = "";
-  els.mediaOnly.checked = false;
+  els.filterImage.checked = false;
+  els.filterVideo.checked = false;
+  els.filterArticle.checked = false;
+  els.filterLink.checked = false;
   focusStack = []; // real navigation (e.g. sidebar click) exits single-card focus mode
   applyFilters();
 }
@@ -509,16 +530,30 @@ function renderMediaItem(url) {
     : `<img src="${url}">`;
 }
 
-// Cheap content-type badges — video/image derived from mediaUrls at render
-// time (same VIDEO_URL_PATTERN used for rendering the media itself);
-// article/quote come from flags parse.js already computed at capture time.
+// Shared by contentBadges and the top-filter checkboxes — video/image are
+// derived from mediaUrls rather than stored separately (same
+// VIDEO_URL_PATTERN used for rendering the media itself).
+function hasVideo(r) {
+  return (r.mediaUrls || []).some((u) => VIDEO_URL_PATTERN.test(u));
+}
+function hasImage(r) {
+  return (r.mediaUrls || []).some((u) => !VIDEO_URL_PATTERN.test(u));
+}
+function hasLink(r) {
+  return (r.externalLinks || []).length > 0;
+}
+
+// Cheap content-type badges — article/quote come from flags parse.js
+// already computed at capture time. A post with both photo and video media
+// only shows "Video" here to keep the badge row short, but the type filter
+// treats them as independent (see applyFilters).
 function contentBadges(r) {
   const badges = [];
   if (r.hasArticle) badges.push("X Article");
   if (r.isQuote) badges.push("Quote");
-  const media = r.mediaUrls || [];
-  if (media.some((u) => VIDEO_URL_PATTERN.test(u))) badges.push("Video");
-  else if (media.length) badges.push("Image");
+  if (hasVideo(r)) badges.push("Video");
+  else if (hasImage(r)) badges.push("Image");
+  if (hasLink(r)) badges.push("Link");
   return badges;
 }
 
@@ -745,6 +780,9 @@ async function deleteBookmark(r) {
 els.search.addEventListener("input", applyFiltersFromInput);
 els.authorFilter.addEventListener("change", applyFiltersFromInput);
 els.tagFilter.addEventListener("change", applyFiltersFromInput);
-els.mediaOnly.addEventListener("change", applyFiltersFromInput);
+els.filterImage.addEventListener("change", applyFiltersFromInput);
+els.filterVideo.addEventListener("change", applyFiltersFromInput);
+els.filterArticle.addEventListener("change", applyFiltersFromInput);
+els.filterLink.addEventListener("change", applyFiltersFromInput);
 
 load();

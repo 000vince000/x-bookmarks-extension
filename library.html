@@ -15,7 +15,12 @@
       <input id="search" type="text" placeholder="Search text or author…" />
       <select id="authorFilter"><option value="">All authors</option></select>
       <select id="tagFilter"><option value="">All tags</option></select>
-      <label><input type="checkbox" id="mediaOnly" /> Media only</label>
+      <div id="typeFilter" class="type-filter">
+        <label><input type="checkbox" id="filterImage" /> Image</label>
+        <label><input type="checkbox" id="filterVideo" /> Video</label>
+        <label><input type="checkbox" id="filterArticle" /> X Article</label>
+        <label><input type="checkbox" id="filterLink" /> Link</label>
+      </div>
     </div>
     <div id="embedControls">
       <span id="embedStatus"></span>
