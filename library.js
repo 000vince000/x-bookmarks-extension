@@ -6,6 +6,7 @@ import {
   archiveBookmark as dbArchiveBookmark,
   getAllOwnTweets,
   setOwnTweetEmbedding,
+  upsertOwnTweets,
 } from "./db.js";
 import { embedAllMissing, topRelated } from "./embeddings.js";
 import { computeClusters, isSubstantive } from "./clusters.js";
@@ -55,6 +56,7 @@ const els = {
   relatedMinScore: document.getElementById("relatedMinScore"),
   ownTweetStatus: document.getElementById("ownTweetStatus"),
   ownTweetEmbedBtn: document.getElementById("ownTweetEmbedBtn"),
+  importOwnTweetsInput: document.getElementById("importOwnTweetsInput"),
 };
 
 async function load() {
@@ -77,6 +79,83 @@ function updateEmbedStatus() {
 function updateOwnTweetStatus() {
   const embedded = ownTweets.filter((r) => r.embedding).length;
   els.ownTweetStatus.textContent = `Own tweets: ${embedded}/${ownTweets.length} embedded`;
+}
+
+// Duplicated from parse.js rather than imported — see the OWN_HANDLE
+// comment below for why (library.js and parse.js run in separate contexts
+// that don't share module scope).
+function decodeHtmlEntities(text) {
+  return (text || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+// X's official data export ships each dataset as a .js file assigning a
+// JSON array to window.YTD.<name>.partN — strip that assignment to get at
+// the parseable JSON underneath.
+function parseYtdFile(text) {
+  const eq = text.indexOf("=");
+  if (eq === -1) return null;
+  try {
+    return JSON.parse(text.slice(eq + 1).trim());
+  } catch {
+    return null;
+  }
+}
+
+// Old-style retweets ("RT @user: ...") are someone else's words, not
+// something this account holder wrote — excluded from the own-tweets
+// corpus for the same reason db.js's STORE_OWN_TWEETS comment gives
+// (scoring bookmarks against what *this person* has personally written).
+const RT_PATTERN = /^RT @/;
+
+// tweet.js's archive shape is a superset of what parse.js's own-tweets
+// scraper captures live — only `id`/`text` are actually needed downstream
+// (see isSubstantive/personalRelevance in clusters.js), so nothing from
+// note-tweet.js (long-form overflow text) is joined in here yet.
+function tweetsFromArchive(entries) {
+  return (entries || [])
+    .map((e) => e.tweet)
+    .filter((t) => t?.id_str && t.full_text && !RT_PATTERN.test(t.full_text))
+    .map((t) => ({
+      id: t.id_str,
+      text: decodeHtmlEntities(t.full_text),
+      createdAt: t.created_at ? new Date(t.created_at).toISOString() : null,
+      capturedAt: new Date().toISOString(),
+    }));
+}
+
+async function importOwnTweetsFromArchive() {
+  const files = [...els.importOwnTweetsInput.files];
+  if (!files.length) return;
+  els.ownTweetStatus.textContent = "Importing…";
+  let inserted = 0;
+  let updated = 0;
+  let recognized = false;
+  for (const file of files) {
+    const text = await file.text();
+    if (!/window\.YTD\.tweets\./.test(text)) continue; // only tweet.js is handled for now
+    const entries = parseYtdFile(text);
+    if (!Array.isArray(entries)) continue;
+    recognized = true;
+    const res = await upsertOwnTweets(tweetsFromArchive(entries));
+    inserted += res.inserted;
+    updated += res.updated;
+  }
+  els.importOwnTweetsInput.value = "";
+  ownTweets = await getAllOwnTweets();
+  updateOwnTweetStatus();
+  clusters = null; // corpus changed — personal-relevance scores need recomputing
+  resetDrillDown();
+  render();
+  alert(
+    recognized
+      ? `Imported ${inserted} new, updated ${updated} existing own tweets.`
+      : "No tweets.js found in the selected file(s)."
+  );
 }
 
 // Only tweets with an embedding, and enough real text to be a trustworthy
@@ -784,5 +863,6 @@ els.filterImage.addEventListener("change", applyFiltersFromInput);
 els.filterVideo.addEventListener("change", applyFiltersFromInput);
 els.filterArticle.addEventListener("change", applyFiltersFromInput);
 els.filterLink.addEventListener("change", applyFiltersFromInput);
+els.importOwnTweetsInput.addEventListener("change", importOwnTweetsFromArchive);
 
 load();

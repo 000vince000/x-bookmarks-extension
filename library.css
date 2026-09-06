@@ -83,6 +83,16 @@ button {
   background: #2f3336;
 }
 
+.import-btn {
+  background: #1a2430;
+  color: #e7e9ea;
+  border: 1px solid #2f3336;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
 #embedStatus {
   color: #8b98a5;
   font-size: 12px;
