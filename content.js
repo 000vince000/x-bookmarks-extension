@@ -57,6 +57,28 @@
     return true; // keep the message channel open for the async response
   });
 
+  // Same relay pattern as DELETE_BOOKMARK, for liking a tweet on X.
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "LIKE_TWEET") return;
+    const requestId = `like-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    const onResult = (event) => {
+      if (event.source !== window) return;
+      const data = event.data;
+      if (!data || data.source !== "x-bookmarks-extension" || data.type !== "LIKE_TWEET_RESULT") return;
+      if (data.requestId !== requestId) return;
+      window.removeEventListener("message", onResult);
+      sendResponse({ ok: data.ok, error: data.error });
+    };
+    window.addEventListener("message", onResult);
+
+    window.postMessage(
+      { source: "x-bookmarks-extension", type: "LIKE_TWEET_REQUEST", tweetId: msg.tweetId, requestId },
+      "*"
+    );
+    return true; // keep the message channel open for the async response
+  });
+
   function injectUI() {
     const bar = document.createElement("div");
     bar.id = "x-bookmarks-status-bar";

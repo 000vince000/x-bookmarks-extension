@@ -110,6 +110,71 @@
       });
   });
 
+  // Like-on-X support. Unlike DELETE_BOOKMARK_QUERY_ID (captured live from
+  // DevTools), this queryId is a publicly-documented value from open-source
+  // X API clients, not one we captured ourselves — X rotates these
+  // periodically, so if this starts failing, re-capture the current
+  // queryId from DevTools (Network tab, filter "Favorite") and swap it in.
+  const FAVORITE_TWEET_QUERY_ID = "lI07N6Otwv1PhnEgXILM7A";
+
+  async function likeTweetOnX(tweetId) {
+    const csrfToken = getCsrfToken();
+    if (!csrfToken) throw new Error("Missing ct0 cookie — are you logged into X in this tab?");
+
+    const res = await window.fetch(
+      `https://x.com/i/api/graphql/${FAVORITE_TWEET_QUERY_ID}/FavoriteTweet`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          authorization: BEARER,
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
+          "x-twitter-active-user": "yes",
+          "x-twitter-auth-type": "OAuth2Session",
+          "x-twitter-client-language": "en",
+        },
+        body: JSON.stringify({ variables: { tweet_id: tweetId }, queryId: FAVORITE_TWEET_QUERY_ID }),
+      }
+    );
+
+    let json = null;
+    try {
+      json = await res.json();
+    } catch (_) {
+      // non-JSON error body — fall through to status-based error below
+    }
+    if (!res.ok || json?.errors) {
+      throw new Error(json?.errors?.[0]?.message || `HTTP ${res.status}`);
+    }
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    const msg = event.data;
+    if (!msg || msg.source !== "x-bookmarks-extension" || msg.type !== "LIKE_TWEET_REQUEST") return;
+
+    likeTweetOnX(msg.tweetId)
+      .then(() => {
+        window.postMessage(
+          { source: "x-bookmarks-extension", type: "LIKE_TWEET_RESULT", requestId: msg.requestId, ok: true },
+          "*"
+        );
+      })
+      .catch((err) => {
+        window.postMessage(
+          {
+            source: "x-bookmarks-extension",
+            type: "LIKE_TWEET_RESULT",
+            requestId: msg.requestId,
+            ok: false,
+            error: String(err?.message || err),
+          },
+          "*"
+        );
+      });
+  });
+
   const originalXhrOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (method, url, ...rest) {
     this.__xBookmarksUrl = url;

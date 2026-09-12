@@ -150,6 +150,28 @@ export async function archiveBookmark(id) {
   });
 }
 
+// Flags a bookmark as liked on X — mirrors archiveBookmark's shape/pattern.
+export async function likeBookmark(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const rec = getReq.result;
+      if (!rec) {
+        reject(new Error(`bookmark ${id} not found`));
+        return;
+      }
+      rec.likedOnX = true;
+      rec.likedAt = new Date().toISOString();
+      store.put(rec);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 // Own-tweets corpus — mirrors upsertBookmarks/setEmbedding's shape, minus
 // tags/notes (meaningless here) but keeping the same text-change-invalidates
 // embedding safeguard.

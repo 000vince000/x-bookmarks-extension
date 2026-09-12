@@ -4,6 +4,7 @@ import {
   setEmbedding,
   deleteBookmark as dbDeleteBookmark,
   archiveBookmark as dbArchiveBookmark,
+  likeBookmark as dbLikeBookmark,
   getAllOwnTweets,
   setOwnTweetEmbedding,
   upsertOwnTweets,
@@ -17,6 +18,9 @@ let all = [];
 let ownTweets = [];
 let filtered = [];
 let searchActive = false; // true whenever search/filters are set — bypasses topic browsing
+// Tri-state per content type: "off" | "include" | "exclude". Cycled by clicking
+// the top-filter chips; see applyFilters for how include/exclude combine.
+const typeFilterState = { image: "off", video: "off", article: "off", link: "off" };
 let clusters = null; // computed lazily, invalidated on new embeddings / K change
 let selectedGroupKey = null; // which sidebar topic is open; null = landing state
 let subClusters = null; // sub-topic breakdown of the currently selected group, if split
@@ -42,10 +46,8 @@ const els = {
   search: document.getElementById("search"),
   authorFilter: document.getElementById("authorFilter"),
   tagFilter: document.getElementById("tagFilter"),
-  filterImage: document.getElementById("filterImage"),
-  filterVideo: document.getElementById("filterVideo"),
-  filterArticle: document.getElementById("filterArticle"),
-  filterLink: document.getElementById("filterLink"),
+  yearFilter: document.getElementById("yearFilter"),
+  typeChips: [...document.querySelectorAll(".type-chip")],
   sidebar: document.getElementById("sidebar"),
   list: document.getElementById("list"),
   count: document.getElementById("count"),
@@ -257,45 +259,42 @@ els.relatedMinScore.addEventListener("change", () => {
 function populateFilters() {
   const authors = [...new Set(all.map((r) => r.authorHandle))].sort();
   const tags = [...new Set(all.flatMap((r) => r.tags || []))].sort();
+  const years = [...new Set(all.filter((r) => r.createdAt).map((r) => new Date(r.createdAt).getFullYear()))].sort(
+    (a, b) => b - a
+  );
   const prevAuthor = els.authorFilter.value;
   const prevTag = els.tagFilter.value;
+  const prevYear = els.yearFilter.value;
 
   els.authorFilter.innerHTML =
     '<option value="">All authors</option>' +
     authors.map((a) => `<option value="${a}">@${a}</option>`).join("");
   els.tagFilter.innerHTML =
     '<option value="">All tags</option>' + tags.map((t) => `<option value="${t}">${t}</option>`).join("");
+  els.yearFilter.innerHTML =
+    '<option value="">Any age</option>' + years.map((y) => `<option value="${y}">${y}</option>`).join("");
 
   els.authorFilter.value = prevAuthor;
   els.tagFilter.value = prevTag;
+  els.yearFilter.value = prevYear;
 }
 
 function applyFilters() {
   const q = els.search.value.trim().toLowerCase();
   const author = els.authorFilter.value;
   const tag = els.tagFilter.value;
-  const typeFilters = {
-    image: els.filterImage.checked,
-    video: els.filterVideo.checked,
-    article: els.filterArticle.checked,
-    link: els.filterLink.checked,
-  };
-  const anyTypeFilter = Object.values(typeFilters).some(Boolean);
-  searchActive = !!(q || author || tag || anyTypeFilter);
+  const year = els.yearFilter.value;
+  const includeTypes = Object.keys(typeFilterState).filter((t) => typeFilterState[t] === "include");
+  const excludeTypes = Object.keys(typeFilterState).filter((t) => typeFilterState[t] === "exclude");
+  const anyTypeFilter = includeTypes.length > 0 || excludeTypes.length > 0;
+  searchActive = !!(q || author || tag || year || anyTypeFilter);
 
   filtered = all.filter((r) => {
     if (author && r.authorHandle !== author) return false;
     if (tag && !(r.tags || []).includes(tag)) return false;
-    if (
-      anyTypeFilter &&
-      !(
-        (typeFilters.image && hasImage(r)) ||
-        (typeFilters.video && hasVideo(r)) ||
-        (typeFilters.article && r.hasArticle) ||
-        (typeFilters.link && hasLink(r))
-      )
-    )
-      return false;
+    if (year && (!r.createdAt || new Date(r.createdAt).getFullYear() !== Number(year))) return false;
+    if (excludeTypes.some((t) => TYPE_PREDICATES[t](r))) return false;
+    if (includeTypes.length && !includeTypes.some((t) => TYPE_PREDICATES[t](r))) return false;
     if (q) {
       const hay = `${r.text} ${r.authorHandle} ${r.authorName} ${(r.tags || []).join(" ")}`.toLowerCase();
       if (!hay.includes(q)) return false;
@@ -309,10 +308,11 @@ function clearSearchAndFilters() {
   els.search.value = "";
   els.authorFilter.value = "";
   els.tagFilter.value = "";
-  els.filterImage.checked = false;
-  els.filterVideo.checked = false;
-  els.filterArticle.checked = false;
-  els.filterLink.checked = false;
+  els.yearFilter.value = "";
+  for (const chip of els.typeChips) {
+    typeFilterState[chip.dataset.type] = "off";
+    chip.dataset.state = "off";
+  }
   focusStack = []; // real navigation (e.g. sidebar click) exits single-card focus mode
   applyFilters();
 }
@@ -609,7 +609,7 @@ function renderMediaItem(url) {
     : `<img src="${url}">`;
 }
 
-// Shared by contentBadges and the top-filter checkboxes — video/image are
+// Shared by contentBadges and the top-filter chips — video/image are
 // derived from mediaUrls rather than stored separately (same
 // VIDEO_URL_PATTERN used for rendering the media itself).
 function hasVideo(r) {
@@ -620,6 +620,20 @@ function hasImage(r) {
 }
 function hasLink(r) {
   return (r.externalLinks || []).length > 0;
+}
+
+const TYPE_PREDICATES = {
+  image: hasImage,
+  video: hasVideo,
+  article: (r) => r.hasArticle,
+  link: hasLink,
+};
+
+function cycleTypeChip(chip) {
+  const type = chip.dataset.type;
+  const next = { off: "include", include: "exclude", exclude: "off" }[typeFilterState[type]];
+  typeFilterState[type] = next;
+  chip.dataset.state = next;
 }
 
 // Cheap content-type badges — article/quote come from flags parse.js
@@ -668,9 +682,11 @@ function renderCard(r, score) {
     <input class="tag-input" placeholder="Add tag and press Enter">
     <textarea class="note-input" placeholder="Notes…"></textarea>
     <div class="archived-badge" hidden>Archived from X</div>
+    <div class="liked-badge" hidden>Liked on X</div>
     <div class="card-actions">
       <a class="view-on-x" href="${r.url}" target="_blank" rel="noopener">View on X</a>
       <button class="related-toggle">Related</button>
+      <button class="like-btn">Like</button>
       <button class="archive-btn">Archive</button>
       <button class="delete-btn">Delete</button>
     </div>
@@ -781,6 +797,20 @@ function renderCard(r, score) {
   const deleteBtn = card.querySelector(".delete-btn");
   deleteBtn.addEventListener("click", () => deleteBookmark(r));
 
+  const likeBtn = card.querySelector(".like-btn");
+  const likedBadge = card.querySelector(".liked-badge");
+  if (r.likedOnX) {
+    likedBadge.hidden = false;
+    likeBtn.disabled = true;
+  }
+  likeBtn.addEventListener("click", async () => {
+    if (r.likedOnX) return;
+    const ok = await likeTweet(r);
+    if (!ok) return;
+    likedBadge.hidden = false;
+    likeBtn.disabled = true;
+  });
+
   const archiveBtn = card.querySelector(".archive-btn");
   const archivedBadge = card.querySelector(".archived-badge");
   if (r.archivedFromX) {
@@ -823,6 +853,23 @@ async function archiveBookmark(r) {
   return true;
 }
 
+// Likes the post on X (signals its relevance to X's feed algorithm) and
+// flags it locally — one-way, no unlike from the extension. Returns
+// whether it actually succeeded, so the caller only updates the UI on a
+// real success.
+async function likeTweet(r) {
+  const res = await chrome.runtime.sendMessage({ type: "LIKE_TWEET", tweetId: r.id });
+  if (!res?.ok) {
+    alert(`Failed to like on X: ${res?.error || "unknown error"}`);
+    return false;
+  }
+
+  await dbLikeBookmark(r.id);
+  r.likedOnX = true;
+  r.likedAt = new Date().toISOString();
+  return true;
+}
+
 async function deleteBookmark(r) {
   if (!confirm(`Delete this from X and your library?\n\n${r.text.slice(0, 100)}`)) return;
 
@@ -859,10 +906,13 @@ async function deleteBookmark(r) {
 els.search.addEventListener("input", applyFiltersFromInput);
 els.authorFilter.addEventListener("change", applyFiltersFromInput);
 els.tagFilter.addEventListener("change", applyFiltersFromInput);
-els.filterImage.addEventListener("change", applyFiltersFromInput);
-els.filterVideo.addEventListener("change", applyFiltersFromInput);
-els.filterArticle.addEventListener("change", applyFiltersFromInput);
-els.filterLink.addEventListener("change", applyFiltersFromInput);
+els.yearFilter.addEventListener("change", applyFiltersFromInput);
+for (const chip of els.typeChips) {
+  chip.addEventListener("click", () => {
+    cycleTypeChip(chip);
+    applyFiltersFromInput();
+  });
+}
 els.importOwnTweetsInput.addEventListener("change", importOwnTweetsFromArchive);
 
 load();

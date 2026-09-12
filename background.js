@@ -22,7 +22,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // keep the message channel open for the async response
   }
 
-  if (msg?.type === "DELETE_BOOKMARK") {
+  if (msg?.type === "DELETE_BOOKMARK" || msg?.type === "LIKE_TWEET") {
     (async () => {
       const tabs = await chrome.tabs.query({ url: X_TAB_URLS });
       if (!tabs.length) {

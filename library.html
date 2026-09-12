@@ -15,11 +15,12 @@
       <input id="search" type="text" placeholder="Search text or author…" />
       <select id="authorFilter"><option value="">All authors</option></select>
       <select id="tagFilter"><option value="">All tags</option></select>
+      <select id="yearFilter"><option value="">Any age</option></select>
       <div id="typeFilter" class="type-filter">
-        <label><input type="checkbox" id="filterImage" /> Image</label>
-        <label><input type="checkbox" id="filterVideo" /> Video</label>
-        <label><input type="checkbox" id="filterArticle" /> X Article</label>
-        <label><input type="checkbox" id="filterLink" /> Link</label>
+        <button type="button" class="type-chip" data-type="image" data-state="off">Image</button>
+        <button type="button" class="type-chip" data-type="video" data-state="off">Video</button>
+        <button type="button" class="type-chip" data-type="article" data-state="off">X Article</button>
+        <button type="button" class="type-chip" data-type="link" data-state="off">Link</button>
       </div>
     </div>
     <div id="embedControls">

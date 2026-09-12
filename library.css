@@ -44,16 +44,32 @@ header h1 {
 
 .type-filter {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
   font-size: 13px;
-  color: #e7e9ea;
 }
 
-.type-filter label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.type-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #1a2430;
+  border: 1px solid #2f3336;
+  color: #8b98a5;
+  cursor: pointer;
+  user-select: none;
+}
+
+.type-chip[data-state="include"] {
+  background: rgba(0, 186, 124, 0.15);
+  border-color: #00ba7c;
+  color: #00ba7c;
+}
+
+.type-chip[data-state="exclude"] {
+  background: rgba(249, 24, 128, 0.15);
+  border-color: #f91880;
+  color: #f91880;
+  text-decoration: line-through;
 }
 
 input,
@@ -427,6 +443,27 @@ button {
 
 .archived-badge {
   color: #ffd400;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.like-btn {
+  font-size: 12px;
+  color: #f91880;
+  border-color: #5c1d3a;
+}
+
+.like-btn:hover {
+  background: #2a1420;
+}
+
+.like-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.liked-badge {
+  color: #f91880;
   font-size: 11px;
   font-weight: 600;
 }
