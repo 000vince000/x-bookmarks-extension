@@ -8,6 +8,8 @@ import {
   getAllOwnTweets,
   setOwnTweetEmbedding,
   upsertOwnTweets,
+  applyThread,
+  setThread,
 } from "./db.js";
 import { embedAllMissing, topRelated } from "./embeddings.js";
 import { computeClusters, isSubstantive } from "./clusters.js";
@@ -20,7 +22,7 @@ let filtered = [];
 let searchActive = false; // true whenever search/filters are set — bypasses topic browsing
 // Tri-state per content type: "off" | "include" | "exclude". Cycled by clicking
 // the top-filter chips; see applyFilters for how include/exclude combine.
-const typeFilterState = { image: "off", video: "off", article: "off", link: "off" };
+const typeFilterState = { image: "off", video: "off", article: "off", link: "off", thread: "off" };
 let clusters = null; // computed lazily, invalidated on new embeddings / K change
 let selectedGroupKey = null; // which sidebar topic is open; null = landing state
 let subClusters = null; // sub-topic breakdown of the currently selected group, if split
@@ -59,6 +61,8 @@ const els = {
   ownTweetStatus: document.getElementById("ownTweetStatus"),
   ownTweetEmbedBtn: document.getElementById("ownTweetEmbedBtn"),
   importOwnTweetsInput: document.getElementById("importOwnTweetsInput"),
+  threadStatus: document.getElementById("threadStatus"),
+  threadBtn: document.getElementById("threadBtn"),
 };
 
 async function load() {
@@ -69,6 +73,7 @@ async function load() {
   applyFilters();
   updateEmbedStatus();
   updateOwnTweetStatus();
+  updateThreadStatus();
   updateSessionStats();
 }
 
@@ -245,7 +250,163 @@ async function toggleOwnTweetEmbedding() {
   render();
 }
 
+// Tweetstorm markers in a thread's first tweet ("🧵", "1/", "(1/n)",
+// "thread", "👇") — only used to check likelier thread heads first.
+const THREAD_MARKER = /🧵|👇|\bthread\b|(^|[\s(])1\s?\/\s?(\d+|n)?(\)|\s|$)/im;
+
+// Which bookmarks "Expand threads" should check, in priority order (0 =
+// skip). A bookmark mid-thread (the author replying to themselves) is
+// certainly part of one. A thread's first tweet looks like any other tweet
+// in the Bookmarks response, so it can only be confirmed by fetching the
+// conversation — marker-bearing ones go first, then the rest. A first
+// tweet always has at least one reply (its own continuation), so
+// replyCount 0 rules one out, and replies to someone else aren't
+// tweetstorms. Bookmarks captured before reply-chain ids were stored
+// (no `inReplyToId` key at all) can't be classified up front, so they're
+// checked as possible heads — expandThread sorts them out.
+function threadCheckTier(r) {
+  if (r.threadCheckedAt) return 0;
+  const replyKnown = "inReplyToId" in r;
+  if (replyKnown && r.inReplyToId && r.authorId && r.inReplyToUserId === r.authorId) return 1;
+  if (replyKnown && r.inReplyToId) return 0;
+  if (!r.replyCount) return 0;
+  return THREAD_MARKER.test(r.text) ? 2 : 3;
+}
+
+function isThread(r) {
+  return (r.thread?.length || 0) > 1;
+}
+
+function updateThreadStatus() {
+  const found = all.filter(isThread).length;
+  const toCheck = all.filter(threadCheckTier).length;
+  els.threadStatus.textContent = `Threads: ${found} found · ${toCheck} to check`;
+}
+
+// Pacing comes from the budget X reports on each response (see
+// readRateLimit in inject.js): whatever's left of the current window is
+// spread evenly over the requests still allowed in it, so the run goes as
+// fast as X actually permits without tripping a 429. The fixed interval is
+// only the fallback for when X sends no rate-limit headers — one request
+// per 6s is the assumed ~150-per-15-minutes budget.
+const THREAD_FALLBACK_INTERVAL_MS = 6000;
+const THREAD_MIN_INTERVAL_MS = 500;
+const RATE_LIMIT_FALLBACK_WAIT_MS = 15 * 60 * 1000;
+const RATE_LIMIT_RESET_GRACE_MS = 5000;
+const MAX_CONSECUTIVE_THREAD_ERRORS = 3;
+
+function threadRequestDelay(res) {
+  const rl = res?.rateLimit;
+  if (!rl) return THREAD_FALLBACK_INTERVAL_MS * (res?.requests || 1);
+  const windowLeftMs = rl.reset * 1000 + RATE_LIMIT_RESET_GRACE_MS - Date.now();
+  if (rl.remaining <= 0) return Math.max(windowLeftMs, THREAD_MIN_INTERVAL_MS);
+  return Math.max(windowLeftMs / rl.remaining, THREAD_MIN_INTERVAL_MS);
+}
+
+function formatDuration(ms) {
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 1) return "<1m";
+  const h = Math.floor(minutes / 60);
+  return h ? `${h}h ${minutes % 60}m` : `${minutes}m`;
+}
+
+let expandingThreads = false;
+let threadExpandCancelled = false;
+
+// Sleeps in short slices so "Stop" takes effect within a second, even
+// mid-way through a 15-minute rate-limit wait.
+async function sleepUnlessThreadCancelled(ms) {
+  const end = Date.now() + ms;
+  while (!threadExpandCancelled && Date.now() < end) {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(1000, end - Date.now())));
+  }
+}
+
+// Runs through every bookmark threadCheckTier flags, one TweetDetail fetch
+// at a time via the open X tab. Each result is persisted as it lands, so
+// stopping and resuming later picks up where it left off.
+async function toggleThreadExpansion() {
+  if (expandingThreads) {
+    threadExpandCancelled = true;
+    return;
+  }
+  expandingThreads = true;
+  threadExpandCancelled = false;
+  els.threadBtn.textContent = "Stop expanding";
+
+  const queue = all
+    .map((r) => ({ r, tier: threadCheckTier(r) }))
+    .filter((x) => x.tier)
+    .sort((a, b) => a.tier - b.tier)
+    .map((x) => x.r);
+  let done = 0;
+  let found = 0;
+  let textChanged = false;
+  let consecutiveErrors = 0;
+  let lastError = "";
+  let rateLimit = null;
+  const startedAt = Date.now();
+
+  while (done < queue.length && !threadExpandCancelled) {
+    const r = queue[done];
+    // ETA from the observed pace so far (rate-limit waits included) — only
+    // once there's a few items' worth of it to go on.
+    const eta = done >= 3 ? ` · ~${formatDuration(((Date.now() - startedAt) / done) * (queue.length - done))} left` : "";
+    const budget = rateLimit?.limit ? ` · X budget ${rateLimit.remaining}/${rateLimit.limit}` : "";
+    els.threadStatus.textContent = `Checking ${done + 1}/${queue.length}${eta} (${found} threads found)${budget}`;
+    const res = await chrome.runtime.sendMessage({
+      type: "EXPAND_THREAD",
+      tweetId: r.id,
+      conversationId: r.conversationId || null,
+    });
+
+    rateLimit = res?.rateLimit || rateLimit;
+
+    if (res?.rateLimited) {
+      const resumeAt = res.rateLimit
+        ? res.rateLimit.reset * 1000 + RATE_LIMIT_RESET_GRACE_MS
+        : Date.now() + RATE_LIMIT_FALLBACK_WAIT_MS;
+      els.threadStatus.textContent = `Rate limited by X — resuming at ${new Date(resumeAt).toLocaleTimeString()}`;
+      await sleepUnlessThreadCancelled(resumeAt - Date.now());
+      continue; // retry the same bookmark
+    }
+
+    if (!res?.ok) {
+      // Left unchecked, so a later run retries it. Several failures in a
+      // row means something systemic (no X tab, a rotated queryId) rather
+      // than one bad tweet — stop instead of burning through the queue.
+      lastError = res?.error || "unknown error";
+      console.warn("[x-bookmarks] thread expansion failed for", r.id, lastError);
+      done++;
+      if (++consecutiveErrors >= MAX_CONSECUTIVE_THREAD_ERRORS) break;
+      await sleepUnlessThreadCancelled(threadRequestDelay(res));
+      continue;
+    }
+
+    consecutiveErrors = 0;
+    await setThread(r.id, res.thread);
+    if (applyThread(r, res.thread)) textChanged = true;
+    if (isThread(r)) found++;
+    done++;
+    await sleepUnlessThreadCancelled(threadRequestDelay(res));
+  }
+
+  expandingThreads = false;
+  els.threadBtn.textContent = "Expand threads";
+  if (textChanged) {
+    clusters = null; // flattened text dropped those embeddings — regroup
+    resetDrillDown();
+  }
+  updateEmbedStatus();
+  updateThreadStatus();
+  render();
+  if (consecutiveErrors >= MAX_CONSECUTIVE_THREAD_ERRORS) {
+    alert(`Stopped expanding threads after ${consecutiveErrors} failures in a row: ${lastError}`);
+  }
+}
+
 els.embedBtn.addEventListener("click", toggleEmbedding);
+els.threadBtn.addEventListener("click", toggleThreadExpansion);
 els.ownTweetEmbedBtn.addEventListener("click", toggleOwnTweetEmbedding);
 els.clusterK.addEventListener("change", () => {
   clusters = null;
@@ -609,17 +770,56 @@ function renderMediaItem(url) {
     : `<img src="${url}">`;
 }
 
+function renderMedia(urls) {
+  return (urls || []).length ? `<div class="media">${urls.map(renderMediaItem).join("")}</div>` : "";
+}
+
+const THREAD_PREVIEW_COUNT = 3;
+
+// A flattened thread renders as numbered segments, each with its own
+// media, collapsed to the first few. The bookmarked tweet is highlighted,
+// since it may be anywhere in the thread.
+function renderThread(container, r) {
+  const n = r.thread.length;
+  const segs = r.thread.map((t, i) => {
+    const seg = document.createElement("div");
+    seg.className = "thread-seg" + (t.id === r.id ? " bookmarked" : "");
+    seg.innerHTML = `<div class="thread-seg-num">${i + 1}/${n}</div><div class="text">${linkifyText(
+      t.text
+    )}</div>${renderMedia(t.mediaUrls)}`;
+    seg.hidden = i >= THREAD_PREVIEW_COUNT;
+    container.appendChild(seg);
+    return seg;
+  });
+  if (n <= THREAD_PREVIEW_COUNT) return;
+
+  const toggle = document.createElement("button");
+  toggle.className = "thread-toggle";
+  toggle.textContent = `Show all ${n} tweets`;
+  toggle.addEventListener("click", () => {
+    const expand = segs[THREAD_PREVIEW_COUNT].hidden;
+    segs.slice(THREAD_PREVIEW_COUNT).forEach((seg) => (seg.hidden = !expand));
+    toggle.textContent = expand ? "Show less" : `Show all ${n} tweets`;
+  });
+  container.appendChild(toggle);
+}
+
 // Shared by contentBadges and the top-filter chips — video/image are
 // derived from mediaUrls rather than stored separately (same
 // VIDEO_URL_PATTERN used for rendering the media itself).
+// A flattened thread's media and links are spread across its segments,
+// not just the bookmarked tweet.
+function mediaUrlsOf(r) {
+  return isThread(r) ? r.thread.flatMap((t) => t.mediaUrls || []) : r.mediaUrls || [];
+}
 function hasVideo(r) {
-  return (r.mediaUrls || []).some((u) => VIDEO_URL_PATTERN.test(u));
+  return mediaUrlsOf(r).some((u) => VIDEO_URL_PATTERN.test(u));
 }
 function hasImage(r) {
-  return (r.mediaUrls || []).some((u) => !VIDEO_URL_PATTERN.test(u));
+  return mediaUrlsOf(r).some((u) => !VIDEO_URL_PATTERN.test(u));
 }
 function hasLink(r) {
-  return (r.externalLinks || []).length > 0;
+  return isThread(r) ? r.thread.some((t) => (t.externalLinks || []).length) : (r.externalLinks || []).length > 0;
 }
 
 const TYPE_PREDICATES = {
@@ -627,6 +827,7 @@ const TYPE_PREDICATES = {
   video: hasVideo,
   article: (r) => r.hasArticle,
   link: hasLink,
+  thread: isThread,
 };
 
 function cycleTypeChip(chip) {
@@ -642,6 +843,7 @@ function cycleTypeChip(chip) {
 // treats them as independent (see applyFilters).
 function contentBadges(r) {
   const badges = [];
+  if (isThread(r)) badges.push(`Thread · ${r.thread.length}`);
   if (r.hasArticle) badges.push("X Article");
   if (r.isQuote) badges.push("Quote");
   if (hasVideo(r)) badges.push("Video");
@@ -671,12 +873,7 @@ function renderCard(r, score) {
         ? `<div class="content-badges">${badges.map((b) => `<span class="content-badge">[${b}]</span>`).join("")}</div>`
         : ""
     }
-    <div class="text"></div>
-    ${
-      (r.mediaUrls || []).length
-        ? `<div class="media">${r.mediaUrls.map(renderMediaItem).join("")}</div>`
-        : ""
-    }
+    <div class="card-body"></div>
     <div class="stats">♥ ${r.likeCount} · ↺ ${r.retweetCount} · ↩ ${r.replyCount}</div>
     <div class="tags"></div>
     <input class="tag-input" placeholder="Add tag and press Enter">
@@ -694,7 +891,9 @@ function renderCard(r, score) {
   `;
   card.querySelector(".name").textContent = r.authorName;
   card.querySelector(".handle").textContent = `@${r.authorHandle}`;
-  card.querySelector(".text").innerHTML = linkifyText(r.text);
+  const body = card.querySelector(".card-body");
+  if (isThread(r)) renderThread(body, r);
+  else body.innerHTML = `<div class="text">${linkifyText(r.text)}</div>${renderMedia(r.mediaUrls)}`;
   card.querySelector(".note-input").value = r.note || "";
 
   const tagsEl = card.querySelector(".tags");

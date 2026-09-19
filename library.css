@@ -17,6 +17,13 @@ header {
   border-bottom: 1px solid #2f3336;
 }
 
+.header-link {
+  margin-left: auto;
+  color: #1d9bf0;
+  font-size: 13px;
+  text-decoration: none;
+}
+
 header h1 {
   font-size: 18px;
   margin: 0;
@@ -327,6 +334,40 @@ button {
 
 .text a {
   color: #1d9bf0;
+}
+
+/* Flattened thread: one segment per tweet, the bookmarked one marked. */
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.thread-seg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 8px;
+  border-left: 2px solid #2f3336;
+}
+
+.thread-seg[hidden] {
+  display: none;
+}
+
+.thread-seg.bookmarked {
+  border-left-color: #1d9bf0;
+}
+
+.thread-seg-num {
+  color: #8b98a5;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.thread-toggle {
+  align-self: flex-start;
+  font-size: 12px;
 }
 
 .media {

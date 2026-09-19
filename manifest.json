@@ -3,7 +3,7 @@
   "name": "X Bookmarks Library",
   "version": "0.1.0",
   "description": "Capture, search, and organize your X.com bookmarks locally.",
-  "permissions": ["unlimitedStorage"],
+  "permissions": ["unlimitedStorage", "storage"],
   "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
@@ -23,7 +23,9 @@
         "https://twitter.com/i/bookmarks*",
         "https://twitter.com/i/history*",
         "https://x.com/vinnygarr*",
-        "https://twitter.com/vinnygarr*"
+        "https://twitter.com/vinnygarr*",
+        "https://x.com/search*",
+        "https://twitter.com/search*"
       ],
       "js": ["parse.js", "content.js"],
       "run_at": "document_start"
@@ -35,7 +37,9 @@
         "https://twitter.com/i/bookmarks*",
         "https://twitter.com/i/history*",
         "https://x.com/vinnygarr*",
-        "https://twitter.com/vinnygarr*"
+        "https://twitter.com/vinnygarr*",
+        "https://x.com/search*",
+        "https://twitter.com/search*"
       ],
       "js": ["inject.js"],
       "world": "MAIN",

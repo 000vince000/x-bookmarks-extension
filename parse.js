@@ -126,6 +126,13 @@ function parseTweet(tweetResult) {
 
     return {
       id: tweet.rest_id,
+      // Reply-chain ids — what identifies a bookmark as part of a
+      // tweetstorm (see threadCheckTier in library.js), and what
+      // buildSelfThread walks to reassemble one.
+      authorId: userResult?.rest_id || legacy.user_id_str || null,
+      conversationId: legacy.conversation_id_str || null,
+      inReplyToId: legacy.in_reply_to_status_id_str || null,
+      inReplyToUserId: legacy.in_reply_to_user_id_str || null,
       authorHandle: screenName || "unknown",
       authorName: userCore?.name || userLegacy?.name || "unknown",
       authorAvatar: userAvatar?.image_url || userLegacy?.profile_image_url_https || "",
@@ -151,7 +158,12 @@ function parseTweet(tweetResult) {
 }
 
 function parseTweetFromItemContent(itemContent) {
-  if (!itemContent || itemContent.itemType !== "TimelineTweet") return null;
+  if (
+    !itemContent ||
+    (itemContent.itemType !== "TimelineTweet" && itemContent.__typename !== "TimelineTweet")
+  ) {
+    return null;
+  }
   return parseTweet(itemContent.tweet_results?.result);
 }
 
@@ -170,6 +182,42 @@ function parseBookmarksResponse(json) {
     }
   } catch (err) {
     console.warn("[x-bookmarks] failed to parse bookmarks response", err);
+  }
+  return records;
+}
+
+// SearchTimeline has changed its entry wrappers several times. Rather than
+// couple research capture to one exact wrapper, walk the timeline entries
+// and parse every object that identifies itself as a TimelineTweet. The
+// payload is JSON (acyclic), and the timeline subtree is small enough that
+// this defensive walk is cheap compared with the network request itself.
+function parseSearchResponse(json) {
+  const records = [];
+  const seen = new Set();
+  try {
+    const timeline = json?.data?.search_by_raw_query?.search_timeline?.timeline;
+    if (!timeline) return records;
+
+    const visit = (value) => {
+      if (!value || typeof value !== "object") return;
+      if (value.itemType === "TimelineTweet" || value.__typename === "TimelineTweet") {
+        const parsed = parseTweetFromItemContent(value);
+        if (parsed && !seen.has(parsed.id)) {
+          seen.add(parsed.id);
+          records.push(parsed);
+        }
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item);
+        return;
+      }
+      for (const child of Object.values(value)) visit(child);
+    };
+
+    visit(timeline.instructions || []);
+  } catch (err) {
+    console.warn("[x-bookmarks] failed to parse search response", err);
   }
   return records;
 }
@@ -210,4 +258,95 @@ function parseOwnTweetsResponse(json) {
     console.warn("[x-bookmarks] failed to parse own-tweets response", err);
   }
   return records.filter((r) => r.authorHandle.toLowerCase() === OWN_HANDLE);
+}
+
+// TweetDetail (what X loads when you open a single tweet) — used to expand
+// a bookmarked tweetstorm into the author's whole thread. The conversation
+// sits under threaded_conversation_with_injections_v2: the focal tweet as a
+// flat item, then one TimelineTimelineModule per reply chain — the
+// author's own continuation ("SelfThread") first, then everyone else's
+// replies. A module X has truncated carries a "show more" cursor item
+// inline; following one returns a TimelineAddToModule instruction with the
+// next batch. Returns every tweet found, plus each module cursor alongside
+// the tweets of the module it came from (so the caller can tell which
+// cursor continues the author's thread). `notFound` is set when X reports
+// the focal tweet as missing (deleted/protected) instead of a conversation.
+function parseTweetDetailResponse(json) {
+  const tweets = [];
+  const moduleCursors = [];
+  const conversation = json?.data?.threaded_conversation_with_injections_v2;
+  if (!conversation) {
+    const message = json?.errors?.[0]?.message || "";
+    return { tweets, moduleCursors, notFound: /no status found|_Missing/i.test(message), error: message };
+  }
+
+  const collectModule = (items) => {
+    const moduleTweets = [];
+    let cursor = null;
+    for (const moduleItem of items || []) {
+      const itemContent = moduleItem?.item?.itemContent;
+      if (itemContent?.itemType === "TimelineTimelineCursor" || itemContent?.__typename === "TimelineTimelineCursor") {
+        cursor = itemContent.value || cursor;
+        continue;
+      }
+      const parsed = parseTweetFromItemContent(itemContent);
+      if (parsed) moduleTweets.push(parsed);
+    }
+    tweets.push(...moduleTweets);
+    if (cursor) moduleCursors.push({ value: cursor, tweets: moduleTweets });
+  };
+
+  try {
+    for (const instruction of conversation.instructions || []) {
+      if (instruction.type === "TimelineAddToModule") {
+        collectModule(instruction.moduleItems);
+        continue;
+      }
+      if (instruction.type !== "TimelineAddEntries") continue;
+      for (const entry of instruction.entries || []) {
+        const content = entry?.content;
+        if (content?.__typename === "TimelineTimelineModule" || content?.entryType === "TimelineTimelineModule") {
+          collectModule(content.items);
+        } else {
+          const parsed = parseTweetFromItemContent(content?.itemContent);
+          if (parsed) tweets.push(parsed);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[x-bookmarks] failed to parse TweetDetail response", err);
+  }
+  return { tweets, moduleCursors, notFound: false };
+}
+
+// Snowflake ids exceed Number precision — compare as BigInt.
+function isEarlierTweetId(a, b) {
+  return BigInt(a) < BigInt(b);
+}
+
+// The author's self-reply chain starting at `headId`: each next link is
+// the author's reply to the previous link. Replies to anyone else — even
+// by the author — aren't part of it. If the author replied to the same
+// tweet of theirs more than once (a fork), the earliest reply is taken as
+// the continuation. Returns [] when the head isn't among `tweets`.
+function buildSelfThread(tweets, headId) {
+  const byId = new Map(tweets.map((t) => [t.id, t]));
+  const head = byId.get(headId);
+  if (!head) return [];
+
+  const continuationOf = new Map();
+  for (const t of byId.values()) {
+    if (t.authorId !== head.authorId || !t.inReplyToId) continue;
+    const existing = continuationOf.get(t.inReplyToId);
+    if (!existing || isEarlierTweetId(t.id, existing.id)) continuationOf.set(t.inReplyToId, t);
+  }
+
+  const chain = [head];
+  const seen = new Set([head.id]);
+  let next;
+  while ((next = continuationOf.get(chain[chain.length - 1].id)) && !seen.has(next.id)) {
+    chain.push(next);
+    seen.add(next.id);
+  }
+  return chain;
 }

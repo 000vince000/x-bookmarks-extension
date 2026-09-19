@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>FinTwit Research Feed</title>
+    <link rel="stylesheet" href="research.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>FinTwit Research Feed</h1>
+        <p>Search your watchlist through X, then keep only the posts worth carrying into research.</p>
+      </div>
+      <a href="library.html">Bookmarks Library</a>
+    </header>
+
+    <section class="watchlist-panel">
+      <div class="panel-heading">
+        <div>
+          <h2>Watchlist searches</h2>
+          <p>One per line: <code>Label | X search query</code>. Searches run sequentially in inactive tabs.</p>
+        </div>
+        <div class="scan-actions">
+          <button id="scanBtn">Scan FinTwit</button>
+          <button id="stopBtn" class="secondary" disabled>Stop</button>
+        </div>
+      </div>
+      <textarea id="watchlist" spellcheck="false"></textarea>
+      <div class="watchlist-footer">
+        <span id="watchlistStatus">Saved locally</span>
+        <span id="scanStatus">Not scanning</span>
+      </div>
+    </section>
+
+    <section class="feed-controls">
+      <input id="feedSearch" type="search" placeholder="Search discoveries…" />
+      <select id="statusFilter">
+        <option value="review">Review queue</option>
+        <option value="kept">Kept</option>
+        <option value="done">Done</option>
+        <option value="low_signal">Low signal</option>
+        <option value="all">All captured</option>
+      </select>
+      <select id="labelFilter"><option value="">All searches</option></select>
+      <select id="sortBy">
+        <option value="quality">Highest quality</option>
+        <option value="newest">Newest discovered</option>
+        <option value="engagement">Most engagement</option>
+      </select>
+      <label class="quality-control">Minimum quality <input id="qualityThreshold" type="number" min="0" max="100" value="30" /></label>
+      <span id="feedCount"></span>
+    </section>
+    <div class="queue-help"><strong>Keep</strong> marks a research candidate. <strong>Done</strong> means read and finished, and removes it from the queue. Automatically gated posts remain under <strong>Low signal</strong>.</div>
+
+    <main id="feed"></main>
+    <script type="module" src="research.js"></script>
+  </body>
+</html>

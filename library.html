@@ -10,6 +10,7 @@
       <h1>Bookmarks Library</h1>
       <div id="count"></div>
       <div id="sessionStats"></div>
+      <a class="header-link" href="research.html">FinTwit Research Feed</a>
     </header>
     <div id="controls">
       <input id="search" type="text" placeholder="Search text or author…" />
@@ -21,6 +22,7 @@
         <button type="button" class="type-chip" data-type="video" data-state="off">Video</button>
         <button type="button" class="type-chip" data-type="article" data-state="off">X Article</button>
         <button type="button" class="type-chip" data-type="link" data-state="off">Link</button>
+        <button type="button" class="type-chip" data-type="thread" data-state="off">Thread</button>
       </div>
     </div>
     <div id="embedControls">
@@ -33,6 +35,9 @@
       <button id="ownTweetEmbedBtn">Compute own-tweet embeddings</button>
       <label class="import-btn" for="importOwnTweetsInput">Import from X archive (tweets.js)</label>
       <input type="file" id="importOwnTweetsInput" accept=".js" multiple hidden />
+      <span class="control-divider"></span>
+      <span id="threadStatus"></span>
+      <button id="threadBtn">Expand threads</button>
     </div>
     <div id="browse">
       <nav id="sidebar"></nav>
